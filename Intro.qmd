@@ -1,0 +1,681 @@
+---
+title: "PSTAT100 Data Science Concepts and Analysis"
+subtitle: "\\Large Lab 1: Dataframe Overview with R"
+author: "Yaxuan Wang"
+date: 9-30-2025
+date-format: full
+format: 
+  pdf:
+    documentclass: scrartcl
+    fontsize: 11pt
+number-sections: false
+execute: 
+  eval: true
+  echo: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message =  FALSE)
+knitr::opts_chunk$set(warning =  FALSE)
+knitr::opts_chunk$set(error =  FALSE)
+bfcolor <- function(x, color) {
+  if (knitr::is_latex_output()) {
+    sprintf("\\textcolor{%s}{\\textbf{%s}}", color, x)
+  } else if (knitr::is_html_output()) {
+    sprintf("<span style='color: %s;'><b>%s</b></span>", color, x)
+  } else x
+}
+
+# Install necessary libraries if they aren't installed
+if (!require(dplyr)) install.packages("dplyr")
+if (!require(tidyr)) install.packages("tidyr")
+if (!require(ggplot2)) install.packages("ggplot2")
+```
+
+
+
+R is a programming language widely used for statistical computing and data analysis. In this tutorial, we will focus on the `dplyr` package for data manipulation.
+
+# Objectives
+
+This lab covers the following topics:
+
+- **Dataframe basics**
+  - Creating dataframes
+  - Dataframe indexing and attributes
+  - Adding, removing, and renaming variables
+- **Operations on dataframes**
+  - Slicing (selecting rows and columns)
+  - Filtering (selecting rows that meet certain conditions)
+- **Grouping and aggregation**
+  - Summary statistics (mean, median, variance, etc.)
+  - Grouped summaries
+  - Chaining operations and style guidelines
+  - Pivoting
+
+```{r}
+# Load libraries
+library(dplyr)
+library(ggplot2)
+```
+
+# 1. Creating DataFrames & Basic Manipulations
+
+A **dataframe** in R is a table where each column has a specific type (numeric, character, etc.). It has two main indices:
+
+-   **Column index**: Labels for each column (usually strings).
+
+-   **Row index**: Ordinal numbers representing each row.
+
+In this tutorial, we will cover:
+
+1.  Creating dataframes from scratch.
+
+2.  Retrieving dataframe attributes.
+
+3.  Indexing dataframes.
+
+4.  Adding, removing, and renaming columns.
+
+We will use the example dataset: **`fruit_info`**, which contains information about different fruits.
+
+## 1.1 Creating DataFrames from Scratch
+
+In R, we use the `data.frame()` function to create a dataframe. Let’s create a dataframe for the **`fruit_info`** dataset.
+
+```{r}
+# Creating a dataframe using a list
+fruit_info <- data.frame(
+  Fruit = c("Apple", "Banana", "Cherry", "Date", "Elderberry"),
+  Color = c("Red", "Yellow", "Red", "Brown", "Purple"),
+  Weight = c(150, 120, 10, 25, 5)
+)
+
+# Display the dataframe
+print(fruit_info)
+```
+
+
+## 1.2 Retrieving Attributes
+
+Once the dataframe is created, you may want to check its attributes like the column names, the number of rows, and the number of columns.
+
+```{r}
+# Checking the number of rows and columns
+nrow(fruit_info)
+ncol(fruit_info)
+
+# Displaying column names
+colnames(fruit_info)
+
+# Displaying the structure of the dataframe
+str(fruit_info)
+```
+
+## 1.3 Indexing DataFrames
+
+In R, you can access the data in a dataframe in various ways.
+
+### [Column Indexing]{.underline}
+
+You can access columns by name or by column index.
+
+```{r}
+# Accessing columns by name index
+fruit_info$Fruit
+
+# Accessing columns by number index
+fruit_info[,1]
+```
+
+### [Row Indexing]{.underline}
+
+You can access rows by number or by condition.
+
+```{r}
+# Accessing rows by number
+fruit_info[1, ]
+fruit_info[1:3, ]
+fruit_info[c(2,4,6), ]
+
+# Accessing rows by condition (Weight > 100)
+fruit_info[fruit_info$Weight > 100, ]
+```
+
+
+## 1.4 Adding, Removing, and Renaming Columns
+
+### [Adding a Column]{.underline}
+
+You can add a new column by assigning values to a new column name.
+
+```{r}
+# Adding a new column for price (just an example)
+fruit_info$Price <- c(1.2, 0.5, 2.0, 3.5, 4.0)
+
+# View updated dataframe
+print(fruit_info)
+```
+
+### [Removing a Column]{.underline}
+
+You can remove a column using `select()` from the `dplyr` package.
+
+```{r}
+# Removing the Score column
+library(dplyr)
+fruit_info <- select(fruit_info, -Price)
+
+# View updated dataframe
+print(fruit_info)
+```
+
+
+### [Renaming Columns]{.underline}
+
+Use `rename()` to change column names.
+
+```{r}
+# Renaming columns
+fruit_info <- rename(fruit_info, Fruit_Name = Fruit)
+
+# View updated dataframe
+print(fruit_info)
+```
+
+## Hand-on Exercise 1
+
+### (1) Adding a new column:
+
+Using direct specification, add to the `fruit_info` table a new column called `rank1` containing integers 1, 2, 3, 4, and 5, which express your personal preference about the taste ordering for each fruit (1 is the tastiest; 5 is the least tasty). Make sure that the numbers utilized are unique - no ties are allowed.
+
+`r bfcolor("Demo Codes:", "red")`
+
+::: callout
+```{r}
+# Adding a new column 'rank1' to express personal preference
+fruit_info$rank1 <- c(1, 2, 3, 4, 5)
+
+# View the updated dataframe
+print(fruit_info)
+```
+:::
+
+### (2) Creating a modified dataframe:
+
+Now, create a new dataframe `fruit_info_mod1` with the same information as `fruit_info`, but with an additional column called `rank2`. We'll start by making a copy of the `fruit_info` dataframe to create the new dataframe `fruit_info_mod1`.
+
+`r bfcolor("Demo Codes:", "red")`
+
+::: callout
+```{r}
+# Creating a new dataframe 'fruit_info_mod1' as a copy of 'fruit_info'
+fruit_info_mod1 <- fruit_info
+```
+:::
+
+Then, using **name indexing**, add a column called `rank2` to the `fruit_info_mod1` dataframe that contains the same values in the same order as the `rank1` column.
+
+`r bfcolor("Demo Codes:", "red")`
+
+::: callout
+```{r}
+# Adding 'rank2' to 'fruit_info_mod1' using the same values as 'rank1'
+fruit_info_mod1$rank2 <- fruit_info_mod1$rank1
+# View the updated dataframe
+print(fruit_info_mod1)
+```
+:::
+
+When using the name indexing approach, the array assigned to the new variable must be **the same length** as the number of rows in the dataframe. What if we only assign values to certain rows?
+
+### (3) New column assignment with missing data:
+
+For example, let’s try adding a new column `rank3` and assign values only to the first two rows. 
+
+`r bfcolor("Demo Codes:", "red")`
+
+::: callout
+```{r}
+# Assign 'rank3' to only the first two rows
+fruit_info_mod1$rank3 <- NA
+fruit_info_mod1$rank3[1:2] <- c(10, 20)
+# View the updated dataframe with missing values in 'rank3'
+print(fruit_info_mod1)
+```
+:::
+
+::: callout
+[**Hints:**]{.underline}
+
+-   **Partial Assignment**: We use row-based indexing (`1:2`) to assign values only to the first two rows of `rank3`. The remaining rows in `rank3` will have `NA` values by default because we didn't assign values to them.
+
+-   **Missing Values**: The unassigned rows will contain missing values (`NA`).
+:::
+
+
+### (4) Checking missing entry:
+
+We can detect missing values using the `is.na()` method in R, which will return a logical dataframe indicating whether an entry is missing.
+
+`r bfcolor("Demo Codes:", "red")`
+
+::: callout
+```{r}
+# Detect missing values in the dataframe
+missing_check <- is.na(fruit_info_mod1)
+# Print missing data frame
+print(missing_check)
+```
+:::
+
+::: callout
+[**Hints:**]{.underline}
+
+-   **Missing Data Check**: The `is.na()` function checks for missing (`NA`) values in the dataframe. It returns a logical dataframe where `TRUE` indicates missing values.
+
+-   **Visualization**: This is helpful for identifying rows or columns with missing data.
+:::
+
+It’s often more helpful to see if any column has missing values. You can do this by appending `any()` to the `is.na()` function, which will return `TRUE` if there are any missing values in the column.
+
+`r bfcolor("Demo Codes:", "red")`
+
+::: callout
+```{r}
+# Check if any column contains missing values
+any_missing <- any(is.na(fruit_info_mod1))
+
+# Check for missing data in each column
+col_missing <- colSums(is.na(fruit_info_mod1))
+
+# Print the result
+print(any_missing)
+print(col_missing)
+```
+:::
+
+::: callout
+[**Hints:**]{.underline}
+
+-   **Missing Data Detection**: We use `colSums(is.na(fruit_info_mod1))` to check for missing data in each column. This will give us the number of missing entries per column.
+-   **Helpful for Clean-Up**: This helps identify which columns may need further attention or data cleaning.
+:::
+
+### (5) Removing column(s) with missing entry:
+
+Once we've finished with some columns, we might want to remove them. In R, we can use `select()` from the `dplyr` package or direct indexing to remove columns.
+
+`r bfcolor("Demo Codes:", "red")`
+
+::: callout
+```{r}
+# Removing a column using dplyr's select()
+library(dplyr)
+
+
+# View the updated dataframe
+
+```
+:::
+
+::: callout
+[**Hints:**]{.underline}
+
+-   **Removing Columns**: We used the `select()` function from `dplyr` to remove the `rank3` column from the dataframe. The negative sign (`-`) indicates that the column should be removed.
+
+-   **Data Cleaning**: This is a common operation when you no longer need certain columns in the dataset.
+:::
+
+
+
+## Hand-on Exercise 2
+
+### (1) Removing `rank` columns:
+
+In this task, we will remove all `rank` columns you created in `fruit_info_mod1`.
+
+In R, we can use the `select()` function from the `dplyr` package to remove columns. The `select()` function does **not modify the original dataframe** directly, but instead **returns a new dataframe** with the specified columns removed. We will assign the result to `fruit_info_original`.
+
+To remove all columns that start with the word "rank", we will use the `starts_with()` function in `dplyr`.
+
+`r bfcolor("Demo Codes:", "red")`
+
+::: callout
+```{r}
+# Dropping all columns starting with 'rank' using select() from dplyr
+# Create fruit_info_original by removing rank columns
+fruit_info_original <- select(fruit_info_mod1, -rank3)
+# View the updated dataframe
+print(fruit_info_original)
+```
+:::
+
+::: callout
+[**Hints:**]{.underline}
+
+-   **Removing Columns**: We used the `select()` function from the `dplyr` package with the `-` operator to exclude columns starting with the word "rank". The `starts_with()` function is used to identify these columns.
+
+-   **Returning a New Table**: This operation does not modify the original dataframe but creates a new one (`fruit_info_original`) with the `rank` columns removed.
+:::
+
+### (2) Creating a new dataframe with capitalized column names:
+
+Now, let’s create a new dataframe `fruit_info_mod2` with the same information as `fruit_info_original`, but with all column names **capitalized** by using `toupper()` function.
+
+`r bfcolor("Demo Codes:", "red")`
+
+::: callout
+```{r}
+# Creating a new dataframe fruit_info_mod2 by copying fruit_info_original
+fruit_info_mod2 <- fruit_info_original
+
+# Capitalizing all column names
+colnames(fruit_info_mod2) <- toupper(colnames(fruit_info_mod2))
+
+# View the modified dataframe
+print(fruit_info_mod2)
+```
+:::
+
+
+
+# 2. Operations on Data Frames
+
+With some basics in place, here you'll see how to perform subsetting operations on data frames that are useful for tidying up datasets.
+
+- **Slicing**: Selecting columns or rows in chunks or by position.  
+- **Filtering**: Selecting rows that meet certain criteria.  
+
+We will illustrate these operations using a dataset comprising counts of baby names born in California each year from 1990 to 2018.
+
+```{r}
+# Import baby names data
+# (Put the csv file in the same folder as this .qmd file)
+baby_names <- read.csv("baby_names.csv")
+
+# Preview first few rows
+head(baby_names)
+```
+
+::: callout
+[**Important note:**]{.underline}
+
+If you received some Error messages saying *Error in file(file, "rt") : cannot open the connection*, 
+this usually means R cannot find your data file.  
+Make sure to put the `baby_names.csv` file in the **same folder** as this `.qmd` file.  
+:::
+
+## Hand-on Exercise 3
+
+### (1) Checking dimensions:
+
+Check the dimensions of the `baby_names` dataset and store them in `dimensions_baby_names`.
+In R, we use the `dim()` function to get the dimensions of a dataframe.
+
+`r bfcolor("Demo Codes:", "red")`
+
+::: callout
+```{r}
+# Get the dimensions of the 'baby_names' dataframe
+dimensions_baby_names <- dim(baby_names)
+# Print the dimensions
+print(dimensions_baby_names)
+```
+:::
+
+### (2) Counting distinct years:
+
+Count the number of occurrences of each distinct year in `baby_names`.
+Store the counts as `occur_per_year` (ordered by year), and the total number of years as `num_years`.
+
+`r bfcolor("Demo Codes:", "red")`
+
+::: callout
+```{r}
+# Count occurrences of each year
+occur_per_year <- table(baby_names$Year)
+# Sort the occurrences by year 
+occur_per_year <- occur_per_year[order(as.numeric(names(occur_per_year)))]
+# Get the number of years represented in the dataset
+num_years <-length(unique(baby_names$Year))
+#printing results
+print(occur_per_year)
+print(num_years)
+```
+:::
+
+::: callout
+[**Notes:**]{.underline}
+
+-   **Sorting by Year**: We first count the occurrences of each year with the `table()` function, which gives us a named vector. The `order()` function is then used to sort the vector by the year, which is achieved by converting the names of the `occur_per_year` (which are stored as character strings) into numeric values with `as.numeric()`.
+
+-   **Number of Years**: The `unique()` function is used to get the distinct years, and `length()` gives the number of unique years.
+:::
+
+
+## 2.1 Slicing: Selecting Rows and Columns
+
+In this section, we'll cover two primary ways to slice a dataframe:
+
+-   **Using index names** to specify rows and columns.
+
+-   **Using integer positions** to specify rows and columns.
+
+These methods are very useful for subsetting data and inspecting different portions of a dataframe.
+
+### [1. Slicing with Index Names]{.underline}
+
+To slice a dataframe by index names (column and row names), you can use the `[]` operator in R.
+You can select a specific entry by specifying both the row and column names.
+
+```{r}
+# Selecting a single row and column by index name
+baby_names[2, 'Name']
+```
+
+-   **Single Index**: In this example, we select the second row and the `Name` column from the `baby_names` dataframe using row index `2` and column name `'Name'`.
+
+### [2. Slicing with a List of Indices]{.underline}
+
+You can also select multiple rows and specific columns by passing a **list** of indices or names.
+
+```{r}
+# Selecting multiple rows and specific columns by index names
+baby_names[c(2, 3), c('Name', 'Count')]
+```
+
+-   **List of Indices**: We use `c(2, 3)` to select rows 2 and 3, and `c('Name', 'Count')` to select the columns `'Name'` and `'Count'`.
+
+### [3. Slicing with Consecutive Indices]{.underline}
+
+You can select a range of rows or columns using the colon (`:`) operator.
+
+```{r}
+# Selecting rows 2 to 10 and columns from 'Year' to 'Count'
+select(baby_names[2:10,], Year:Count)
+```
+
+-   **Consecutive Indices**: The `2:10` syntax selects rows 2 through 10, and `'Year':'Count'` selects all columns from `Year` to `Count`.
+
+-   **`select(Year:Count)`**: This approach uses `dplyr`'s `select()` function to select columns starting from `'Year'` and ending at `'Count'`. It properly handles the selection of consecutive columns by name, ensuring that no errors occur.
+
+### [4. Slicing with Integer Positions]{.underline}
+
+In R, you can also slice data by integer positions using the `[,]` operator.
+To select a specific entry by position, you can specify row and column indices.
+
+```{r}
+# Selecting a specific entry by position (row 2, column 3)
+baby_names[2, 3]
+```
+
+-   **Single Position**: The `baby_names[2, 3]` selects the entry in the second row and third column by position.
+
+### [5. Slicing with a List of Positions]{.underline}
+
+You can select multiple rows and columns by specifying their integer positions.
+
+```{r}
+# Selecting multiple rows and columns by position
+baby_names[c(2, 3), c(3, 4)]
+```
+
+-   **List of Positions**: The `c(2, 3)` selects the second and third rows, and `c(3, 4)` selects the third and fourth columns by position.
+
+### [6. Slicing with Consecutive Positions]{.underline}
+
+You can also slice consecutive rows or columns by specifying a range of positions.
+
+```{r}
+# Selecting rows 2 through 11 and columns 2 through 5
+baby_names[2:11, 2:5]
+```
+
+-   **Consecutive Positions**: The `2:11` selects rows 2 through 11, and `2:5` selects columns 2 through 5 based on their integer positions.
+
+### [7. Slicing Rows Based on Conditions]{.underline}
+
+In R, you can also slice rows based on specific conditions by using logical indexing. For example, you can select rows where a certain column satisfies a condition.
+
+**Example: Selecting Rows with `Count` Greater than 100**
+
+```{r}
+# Slice rows where 'Count' is greater than 100
+head(baby_names[baby_names$Count > 100, ])
+```
+
+-   **Slicing with Condition**: We use logical indexing (`baby_names$Count > 100`) to select rows where the `Count` column is greater than 100. This condition returns a logical vector that is used to subset the rows.
+
+### [8. Slicing Rows Based on Column Value Range]{.underline}
+
+You can slice rows based on a range of values in a column, for example, selecting rows where the `Year` column is between two values.
+
+**Example: Selecting Rows for Years 2000 to 2005**
+
+```{r}
+# Slice rows where the 'Year' is between 2000 and 2005
+head(baby_names[baby_names$Year >= 2000 & baby_names$Year <= 2005, ])
+```
+
+-   **Range Condition**: Here, we use a logical condition to select rows where the `Year` is between 2000 and 2005 (inclusive). The logical condition is used within the indexing brackets to filter rows.
+
+## Hand-on Exercise 4:
+
+Look up the name of a friend! Store the name as `friend_name`. Based on the `name` column, set specific conditions by using logical indexing to slice rows for the name of your friends, i.e., Amanda, and the `Name`, `Count`, `Sex`, and `Year` columns **in that order**, and store the data frame as`friend_slice`.
+
+**Step 1: Define the Friend's Name(s)**
+
+We'll store the names of your friends as `friend_name`.
+
+**Step 2: Slice the Data Based on the Name**
+
+We'll use the `%in%` operator to match multiple names and filter rows based on the `Name` column. Then, we'll select the desired columns (`Count`, `Sex`, `Year`).
+
+`r bfcolor("Demo Codes:", "red")`
+
+::: callout
+```{r}
+# Define the friend's name(s) to look up
+friend_name <-c("Amanda", "Sarah")
+
+# Use logical indexing to slice rows for 'Sarah' and 'Amanda' 
+#   and select the required columns in the correct order
+friend_slice <- baby_names[baby_names$Name %in% friend_name, c("Name", "Count", "Sex", "Year")]
+
+# View the result
+head(friend_slice)
+```
+:::
+
+## 2.2 Filtering
+
+Filtering is the process of sifting out rows according to a criterion. In R, this can be accomplished using logical indexing, which creates a vector of `TRUE`s and `FALSE`s based on a comparison. Let's walk through a simple example:
+
+### Filter Names Based on Occurrence Count
+
+Let’s say we want to filter out all names with fewer than 1000 occurrences. First, we can define a logical vector that checks the `Count` column.
+
+```{r}
+# Create a logical vector where TRUE means Count is greater than 1000
+arr <- baby_names$Count > 1000
+
+# View the logical array
+head(arr, sum(arr)*0.05)
+```
+
+Once we have the logical array, we can apply it to filter the dataframe and select only the rows where `Count` is greater than 1000.
+
+```{r}
+# Filter the dataframe using the logical array
+baby_names_filtered <- baby_names[arr, ]
+
+# View the filtered dataframe
+head(baby_names_filtered)
+```
+
+**Checking Dimensions Before and After Filtering**
+
+To get a sense of how many rows were filtered, we can compare the dimensions of the original and filtered dataframes.
+
+```{r}
+# Compare dimensions before and after filtering
+print(dim(baby_names))
+print(dim(baby_names_filtered))
+```
+
+Notice that the filtered dataframe is much smaller than the overall dateframe -- only about **2000** rows correspond to a name occurring more than 1000 times in a year for a gender.
+
+### [Common Comparison Operators]{.underline}
+
+Here are some commonly used comparison operators in R for filtering data:
+
+| Symbol | Usage    | Meaning                              |
+|--------|----------|--------------------------------------|
+| `==`   | `a == b` | Does `a` equal `b`?                  |
+| `<=`   | `a <= b` | Is `a` less than or equal to `b`?    |
+| `>=`   | `a >= b` | Is `a` greater than or equal to `b`? |
+| `<`    | `a < b`  | Is `a` less than `b`?                |
+| `>`    | `a > b`  | Is `a` greater than `b`?             |
+| `!`    | `!p`     | Negates `p` (logical NOT)            |
+| `&`    | `p & q`  | `p` AND `q`                          |
+| `|`    | `p | q`  | `p` OR `q`                           |
+
+What if instead you wanted to filter using multiple conditions? Here's an example of retrieving rows with counts exceeding 1000 for only the year 2001:
+
+### Filtering with Multiple Conditions
+
+You can combine multiple conditions to filter the dataframe in more complex ways. For example, let's retrieve all names where `Count` exceeds 1000 and the `Year` is 2001:
+
+```{r}
+# Filter using two conditions
+filtered_data <- baby_names[(baby_names$Year == 2001) & (baby_names$Count > 1000), ]
+
+# View the filtered data
+head(filtered_data, dim(filtered_data)[1]*0.1)
+```
+
+-   **Combining Conditions:** In this example, we combine two conditions using the `&` operator. We filter for rows where `Year` equals 2001 and `Count` is greater than 1000.
+
+## Hand-on Exercise 5:
+
+Select the **girl** names in **2010** that were given more than **3000 times**, and store them as `common_girl_names_2010`.
+
+`r bfcolor("Demo Codes:", "red")`
+
+::: callout
+```{r}
+# Filter for girl names in 2010 with more than 3000 occurrences
+common_girl_names_2010 <- baby_names[(baby_names$Year == 2010) & (baby_names$Sex == "F") & (baby_names$Count > 3000), ]
+
+# View the filtered result
+head(common_girl_names_2010)
+```
+:::
+
+::: callout
+[**Hints:**]{.underline}
+
+-   **Multiple Conditions:** The logical expression `(baby_names$Year == 2010) & (baby_names$Sex == "F") & (baby_names$Count > 3000)` filters rows where the year is 2010, the sex is female (`"F"`), and the count is greater than 3000.
+:::
+

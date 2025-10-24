@@ -1,0 +1,281 @@
+---
+title: "PSTAT 100 Lab4"
+format: pdf
+editor: visual
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message =  FALSE)
+knitr::opts_chunk$set(warning =  FALSE)
+knitr::opts_chunk$set(error =  FALSE)
+bfcolor <- function(x, color) {
+  if (knitr::is_latex_output()) {
+    sprintf("\\textcolor{%s}{\\textbf{%s}}", color, x)
+  } else if (knitr::is_html_output()) {
+    sprintf("<span style='color: %s;'><b>%s</b></span>", color, x)
+  } else x
+}
+
+# Install necessary libraries if they aren't installed
+if (!require(dplyr)) install.packages("dplyr")
+if (!require(tidyr)) install.packages("tidyr")
+if (!require(ggplot2)) install.packages("ggplot2")
+```
+
+# Lab 4: Simulations, sampling, and missing data
+
+In this lab, you will explore another small example of how to simulate data and perform random sampling with and without replacement. You will also learn more about handling missing data in R.
+
+## Objectives
+
+This lab covers the following topics:
+
+-   **Simulating data**
+-   **Sample with and without replacement**
+-   **Missing data**
+
+```{r}
+# Load libraries
+library(dplyr)
+library(ggplot2)
+```
+
+# Background
+
+## Simulated data
+
+For additional practice, we will start off this lab be simulating data just as last time. If you do not recall, lab 3 states:
+
+**Simulation** is a great means of exploration ***because you can control the population properties***, which are generally unknown in practice. When working with real data, you just have one dataset, and you don't know any of the properties of the population or what might have happened if a different sample were collected. That makes it difficult to understand sampling variation and impossible to directly compare the sample properties to the population properties. With simulated data, by contrast, you control how data are generated with exact precision -- so by extension, you know everything there is to know about the population. In addition, repeated simulation of data makes it possible to explore the typical behavior of a particular sampling design, so you can learn 'what usually happens' for a particular sampling design by direct observation.
+
+## Hypothetical population
+
+To provide a little context to this scenario, imagine that you're measuring walnut weights. The cell below simulates weight measurements for a hypothetical population of 1000 walnuts in a box.
+
+```{r}
+# Load necessary library
+set.seed(123) # for reproducibility
+
+population <- data.frame(
+  weight = rnorm(n = 1000, mean = 6, sd = 1),
+  walnut_id = 1:1000
+)
+
+# Check first few rows
+head(population, 5)
+```
+
+#### **Question 1**
+
+Calculate the mean weight for the hypothetical population and store the value as \`mean_weight\`. Does your output make sense?
+
+```{r}
+mean_weight <- mean(population$weight)
+mean_weight
+```
+
+#### **Question 2**
+
+Calculate the standard deviation of weight for the hypothetical population and store the value as `std_dev_pop_weight`. Again, check, does your output make sense?
+
+```{r}
+std_dev_pop_weight <- sd(population$weight)
+std_dev_pop_weight
+```
+
+The chunk below produces a histogram of the population values -- the distribution of weight measurements among the hypothetical population -- with a vertical line indicating the population mean.
+
+```{r, eval = FALSE}
+hist_pop <- ggplot(population, aes(x = weight)) +
+  geom_histogram(binwidth = 0.3, fill = "steelblue", alpha = 0.8, boundary = 0) +
+  geom_vline(aes(xintercept = mean_weight), color = "blue", linetype = "dashed", size = 1) +
+  labs(
+    x = "Weight (g)",
+    y = "Number of walnuts in population",
+    title = "Histogram of Walnut Weights with Population Mean"
+  ) +
+  xlim(0, 12) +
+  theme_minimal()
+
+# Display the plot
+print(hist_pop)
+```
+
+#### Random Sampling Without Replacement
+
+Imagine that your sampling design involves collecting walnuts by randomly selecting 75 walnuts from the box **without replacement**. We'll suppose that using your collection method, any of the 1000 walnuts is equally likely to be obtained, so that your 75 walnuts comprise a *random sample* of the population.
+
+Note: When we take a **random sample without replacement**, it means that once we’ve picked a walnut, we **don’t** put it back into the box before picking the next one. Each walnut in the box can only be picked at most once.
+
+We can simulate samples obtained using your hypothetical design by drawing values without replacement from the population.
+
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+
+# Draw a random sample of 75 walnuts without replacement
+sample <- population[sample(1:nrow(population), size = 75, replace = FALSE), ]
+
+# View the sample
+head(sample)
+```
+
+#### Question 3
+
+Calculate the mean diameter of walnuts in the simulated sample and store the value as `mean_sample_weight`.
+
+```{r}
+mean_sample_weight <- mean(sample$weight)
+mean_sample_weight
+```
+
+Same as the last lab, you should see above that the sample mean is close to the population mean. In fact, *all* sample statistics are close to the population; this can be seen by comparing the distribution of sample values with the distribution of population values.
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(patchwork)
+
+# Calculate means
+mean_sample_weight <- mean(sample$weight)
+mean_population_weight <- mean(population$weight)
+
+# Create histogram for the sample
+hist_samp <- ggplot(sample, aes(x = weight)) +
+  geom_histogram(binwidth = 0.3, fill = "steelblue", alpha = 0.8, boundary = 0) +
+  geom_vline(aes(xintercept = mean_sample_weight), color = "blue", linetype = "dashed", size = 1) +
+  labs(
+    x = "Weight (gm)",
+    y = "Number of walnuts in sample",
+    title = "Sample Histogram"
+  ) +
+  xlim(0, 12) +
+  theme_minimal()
+
+# Create histogram for the population
+hist_pop <- ggplot(population, aes(x = weight)) +
+  geom_histogram(binwidth = 0.3, fill = "steelblue", alpha = 0.8, boundary = 0) +
+  geom_vline(aes(xintercept = mean_population_weight), color = "blue", linetype = "dashed", size = 1) +
+  labs(
+    x = "Weight (gm)",
+    y = "Number of walnuts in population",
+    title = "Population Histogram"
+  ) +
+  xlim(0, 12) +
+  theme_minimal()
+
+# Display the combined plot
+print(hist_samp)
+print(hist_pop)
+```
+
+While there are some differences, the overall shape is similar and the sample mean is almost exactly the same as the population mean. So with this sampling design, you obtained a dataset with few distortions of the population properties, and the sample mean is a good estimate of the population mean.
+
+#### Question 4
+
+Simulate a population of almond weights using a **normal distribution**. Generate **3000 observations** with a **mean of 1.3 grams** and a **standard deviation of 0.2 grams**.\
+
+Store the results in a data frame representing your almond population and call it `almond_population`
+
+```{r}
+# Load necessary library
+set.seed(123) # for reproducibility
+
+almond_population <- data.frame(
+  weight = rnorm(n = 3000, mean = 1.3, sd = 0.2),
+  almond_id = 1:3000
+)
+
+head(almond_population, 5)
+```
+
+#### Question 5
+
+Calculate the mean weight for the hypothetical population and store the value as \`alm_mean_weight\`. Also, calculate the standard deviation and call it \`std_dev_almond_pop_weight\`.
+
+```{r}
+alm_mean_weight <- mean(almond_population$weight)
+alm_mean_weight
+
+std_dev_almond_pop_weight <- sd(almond_population$weight)
+std_dev_almond_pop_weight
+```
+
+#### Random Sampling With Replacement
+
+Now, imagine that your sampling design involves collecting almonds by randomly selecting 100 almonds from the box **with replacement**. We'll suppose that using your collection method, any of the 3000 almonds are equally likely to be obtained, so that your 100 almonds comprise a *random sample* of the population.
+
+Note: When we take a **random sample with replacement**, it means that once we’ve picked an almond, we record it, but then put it back into the box before picking the next one. Meaning, an almond can be selected more than once.
+
+#### Question 6
+
+**Modify** the walnut sample generating code that used without replacement, and simulate a sample of 100 almonds **with replacement**.
+
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+
+almond_sample <- almond_population[sample(1:nrow(almond_population), size = 100, replace = TRUE), ]
+
+head(almond_sample)
+```
+
+#### Question 7
+
+Run the following code. Explain why the output is or is not 100. (If you do not know what the unique function does, you can run "?unique" into the console to open the documentation for the unique function.
+
+```{r, eval=FALSE}
+#since I sampled with replacement, and unique() removes duplicates and keeps only distinct values, so it is less than 100 since the unique() function removed any almonds that were picked twice.
+length(unique(almond_sample$almond_id))
+```
+
+## Missing Data
+
+Just to give you some practice with missing data, let's observe the following data:
+
+```{r}
+people <- data.frame(
+  Name = c("Alice", "Charlie", "Tom", "Frank", "Tim", "Samantha"),
+  Age = c(25, 32, NA, 29, NA, 19),
+  Height_cm = c(165, 180, 175, NA, 168, 172))
+
+print(people)
+```
+
+## Question 8
+
+Using drop_na(), drop the missing values, save the dataframe as "people_no_na" , and print the results.
+
+```{r}
+library(tidyr)
+people_no_na <- drop_na(people)
+print(people_no_na)
+```
+
+In lecture, you also discussed the replace_na() function. Let us use this function to fill in the NA values in the Height_cm column with the mean Height_cm.
+
+```{r}
+mean_height <- mean(people$Height_cm, na.rm = TRUE)
+
+people_imputed_height <- people %>%
+  mutate(Height_cm = replace_na(Height_cm, mean_height))
+
+print(people_imputed_height)
+```
+
+We can see now that Frank has a Height_cm entry.
+
+## Question 9
+
+Impute the mean age into the people_imputed_height dataframe such that Tom and Tim have an Age entry instead of NA.
+
+```{r}
+#Calculate the mean age (Ignoring NAs)
+mean_age <- mean(people_imputed_height$Age, na.rm = TRUE)
+
+#Replace missing ages with the mean
+people_imputed <- people_imputed_height %>%
+  mutate(Age = replace_na(Age, mean_age))
+
+print(people_imputed)
+```
