@@ -1,0 +1,566 @@
+---
+title: "PSTAT100 Lab6: Regression and Bootstrapping"
+format: pdf
+editor: visual
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message =  FALSE)
+knitr::opts_chunk$set(warning =  FALSE)
+knitr::opts_chunk$set(error =  FALSE)
+bfcolor <- function(x, color) {
+  if (knitr::is_latex_output()) {
+    sprintf("\\textcolor{%s}{\\textbf{%s}}", color, x)
+  } else if (knitr::is_html_output()) {
+    sprintf("<span style='color: %s;'><b>%s</b></span>", color, x)
+  } else x
+}
+
+# Install necessary libraries if they aren't installed
+if (!require(dplyr)) install.packages("dplyr")
+if (!require(tidyr)) install.packages("tidyr")
+if (!require(ggplot2)) install.packages("ggplot2")
+```
+
+# Objectives
+
+This lab covers the following topics:
+
+-   **Simple Linear Regression**
+-   **Multivariate Linear Regression**
+    -   Model fitting
+    -   Standard errors
+    -   Coefficient interpretation
+-   **Bootstrapping**
+
+# Data: Fertility Rates
+
+In this lab, you'll work with country indicators, total fertility rates, and gender indicators for a selection of countries in 2018, and explore the decline in fertility rates associated with developed nations.
+
+The data are stored in separate `.csv` files and imported below:
+
+```{r}
+# Load necessary library
+library(dplyr)
+
+# Read the data
+fertility <- read.csv("data/fertility.csv")
+country <- read.csv("data/country-indicators.csv")
+gender <- read.csv("data/gender-data.csv")
+```
+
+The variables you'll work with in this portion are the following:
+
+| Dataset | Name | Variable | Units |
+|------------------|------------------|------------------|------------------|
+| fertility | `fertility_total` | National fertility rate | Average number of children per woman |
+| country | `hdi` | Human development index | Index between 0 and 1 (0 is lowest, 1 is highest) |
+| gender | `educ_expected_yrs_f` | Expected years of education for adult women | Years |
+
+Because the variables of interest are stored in three separate dataframes, you'll first need to **extract** them and **merge by country**.
+
+```{r}
+# Select variables of interest
+fertility_sub <- fertility %>% select(Country, fertility_total)
+gender_sub <- gender %>% select(Country, educ_expected_yrs_f)
+country_sub <- country %>% select(Country, hdi)
+
+# Merge datasets
+reg_data <- fertility_sub %>%
+  inner_join(gender_sub, by = "Country") %>%
+  left_join(country_sub, by = "Country") %>%
+  drop_na()
+
+# Preview data
+head(reg_data, 4)
+```
+
+We'll treat the fertility rates as our variable of interest.
+
+# Quick Exploratory analysis
+
+A preliminary step in regression analysis is typically data exploration through scatterplots. The objective of exploratory analysis in this context is to identify **an approximately linear relationship** to model.
+
+## Question 1: Education vs fertility rate AND HDI vs fertility rate
+
+Construct a **scatterplot** of total **fertility** against **expected years of education for women**. Label the axes 'Fertility rate' and 'Expected years of education for women'. Store this plot as `scatter_educ` and display the graphic.
+
+`r bfcolor("YOUR ANSWER:", "red")`\
+
+```{r, eval=FALSE}
+library(ggplot2)
+# create a scatter plot
+scatter_educ <- ggplot(reg_data , aes(x = educ_expected_yrs_f, y = fertility_total)) +
+geom_point() +
+labs(x = "Expected years of education for women", y = "Fertility rate",
+title = "Education and Fertility Rate")
+scatter_educ
+
+```
+
+Now construct a **scatterplot** comparing **fertility rate** with **HDI**. Make sure you choose appropriate labels for your axes and plot. Store this plot as `scatter_hdi` and display the graphic.
+
+`r bfcolor("YOUR ANSWER:", "red")`\
+
+```{r, eval=TRUE}
+scatter_hdi <- ggplot(reg_data, aes(x = hdi, y = fertility_total)) + 
+  geom_point() +
+  labs(
+    x = "Human Development Index (HDI)",
+    y = "Fertility rate",
+    title = "HDI and Fertility Rate"
+  )
+
+print(scatter_hdi)
+
+```
+
+This figure shows **a negative relationship** between fertility rate and HDI; it may **not be exactly linear**, but a line should provide a decent approximation. So, the plots suggest that a **linear regression model** in one or both explanatory variables is reasonable.
+
+# Simple linear regression
+
+To start you'll fit a **simple linear model** regressing **fertility on education**.
+
+First we'll need to store the quantities -- the response and explanatory variables -- needed for model fitting in the proper format.
+
+Recall that the linear model in matrix form is:
+
+$$
+\mathbf{y} = \mathbf{X} \boldsymbol{\beta} + \boldsymbol{\epsilon}
+$$
+
+where:
+
+$$
+\mathbf{y} =
+\begin{bmatrix}
+y_1 \\
+y_2 \\
+\vdots \\
+y_n
+\end{bmatrix},
+\quad
+\mathbf{X} =
+\begin{bmatrix}
+1 & x_1 \\
+1 & x_2 \\
+\vdots & \vdots \\
+1 & x_n
+\end{bmatrix},
+\quad
+\boldsymbol{\beta} =
+\begin{bmatrix}
+\beta_0 \\
+\beta_1
+\end{bmatrix},
+\quad
+\boldsymbol{\epsilon} =
+\begin{bmatrix}
+\epsilon_1 \\
+\epsilon_2 \\
+\vdots \\
+\epsilon_n
+\end{bmatrix}
+$$
+
+Notice that the explanatory variable matrix **X** includes a column of ones for the intercept (refer to slide 32 of linear regression slides). So, the quantities needed are:
+
+-   **y**, a one-dimensional array of the total fertility rates for each country.
+-   **X**, a two-dimensional array with a column of ones (intercept) and a column of the expected years of education for women (explanatory variable).
+
+The cell below constructs these arrays in R:
+
+```{r, eval = TRUE}
+# Retrieve response variable
+y <- reg_data$fertility_total
+
+# Construct explanatory variable (matrix)
+x <- reg_data$educ_expected_yrs_f
+x_with_leading1 <- model.matrix(~ x)
+
+# Print first few rows of X
+head(y)
+head(x_with_leading1)
+```
+
+## Estimation
+
+Fitting a model refers to computing estimates; the `lm()` function in R will fit a linear regression model based on the response vector and explanatory variable matrix. The model structure follows: $$
+\mathbf{y} = \mathbf{X} \boldsymbol{\beta} + \boldsymbol{\epsilon}
+$$ The following code fits the simple linear model:
+
+```{r, eval = TRUE}
+# Fit simple linear model
+lm_fit <- lm(y ~ x, data = reg_data)
+#Here, R is estimating the best-fitting straight line
+
+# Display summary of results
+summary(lm_fit)
+```
+
+## Extracting Estimates
+
+-   The **coefficient estimates** $\widehat{\beta}_0$ and $\widehat{\beta}_1$ are obtained using:
+
+```{r, eval = TRUE}
+# Coefficients
+coef(lm_fit) #this pulls out the 2 estimated coefficients
+```
+
+-   The **error variance estimate** $\widehat{\sigma}^2$ can be retrieved as:
+
+```{r, eval = TRUE}
+# Variance estimate
+#sigma squared is the variance
+sigma_hat2 <- summary(lm_fit)$sigma^2
+sigma_hat2
+#this tells you how spread out the points are from the regression line
+#small variance means points are close to the line (strong relationship)
+#Large variance means points are scattered
+#(weak relationship)
+```
+
+-   The **variance-covariance matrix** of the **estimated coefficients** is: $$
+    \sigma^2 (\mathbf{X}'\mathbf{X})^{-1}
+    $$ which can be retrieved in R using:
+
+```{r, eval = TRUE}
+# Variance-covariance matrix of coefficients
+vcov(lm_fit) #stands for variance covariance
+#outputs variance of B0, variance of B1, and the covariance between them
+```
+
+## Model Interpretation
+
+A standard metric often reported with linear models is the $R^2$ score, which quantifies the **proportion of variation in the response explained by the model**:
+
+```{r, eval = TRUE}
+# Compute R-squared
+summary(lm_fit)$r.squared
+```
+
+So, the expected years of education for women in a country explains $72.38\%$ of variability in fertility rates, and furthermore, according to the fitted model:
+
+-   For a country in which women are **entirely uneducated**, the estimated mean fertility rate is $7.5$ children on average by the end of a woman's reproductive period.
+
+-   Each additional year of education for women is associated with a **decrease** in a country's fertility rate by an estimated 0.43.
+
+-   After accounting for women's education levels, fertility rates vary by a standard deviation of $0.66=\sqrt{0.438}$ across countries.
+
+-   This model provides an initial assessment of the relationship, but further **diagnostics** are necessary to validate assumptions.
+
+Much more can/should be done to this analysis (center the explanatory variable, compute fitted values and residuals, visualizations, calculate uncertainty bands, calculate predictive intervals, and more). However, for the sake of time, we will move on to multivariate linear regression where we will.
+
+# Multiple Linear Regression
+
+Now let's consider adding the **human development factor** to the model. First, let's investigate the *univariate* relationship between **HDI** (Human Development Index) and **fertility rate**.
+
+A scatterplot is shown below with a regression line overlaid. The relationship may not be perfectly linear, but a line should provide a decent approximation.
+
+```{r, eval=TRUE}
+# Scatterplot of HDI vs Fertility Rate with Regression Line
+ggplot(reg_data, aes(x = hdi, y = fertility_total)) +
+  geom_point() +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +
+  labs(title = "Fertility Rate vs. Human Development Index",
+       x = "Human Development Index (HDI)",
+       y = "Fertility Rate")
+```
+
+## Question 2: Fit a Model with HDI Only
+
+Fit the model plotted above. Display the **coefficient estimates**, **standard errors**, and $R^2$ statistic.
+
+```{r, eval=TRUE}
+# Fit simple linear regression with HDI only
+lm_hdi <- lm(fertility_total ~ hdi, data = reg_data)
+# Display summary of results
+summary(lm_hdi)
+
+```
+
+## Question 3: Display the **coefficient estimates**, **standard errors**, and $R^2$ statistic.
+
+Below, complete the code to calculate the coefficient estimates, standard errors, and $R^2$ statistic. Note, for the standard errors, the standard errors reported by `lm()` are *model-based* and rely on the linear regression assumptions. For the solution below, you may use the model-based solution.
+
+```{r, eval=TRUE}
+# Coefficients
+#display these different things extracted from Question 2
+paste("Coefficient estimates (beta0): ", coef(lm_hdi)[1])
+paste("Coefficient estimates (beta1): ", coef(lm_hdi)[2])
+
+# Variance estimate
+paste("Error variance estimate is: ", summary(lm_hdi)$sigma^2)
+
+# Variance-covariance matrix
+vcov_mat <- vcov(lm_hdi)
+paste("Standard errors of estimated beta0 are: ", sqrt(vcov_mat[1, 1]))
+
+paste("Standard errors of estimated beta1 are: ", sqrt(vcov_mat[2, 2]))
+
+# Compute R-squared
+paste("R^2 statistic is: ", summary(lm_hdi)$r.squared)
+```
+
+You should have observed that this model also explains about **70% of variance in fertility rates**. This suggests that **HDI** is an **equally good predictor of fertility rates**.
+
+However, HDI is **highly correlated** with women's education. Let's compute their **correlation**:
+
+```{r,  eval=TRUE}
+# Compute correlation between HDI and education
+#1 = perfect positive linear relationship
+#-1 = perfect negative linear relationship
+#0 = no linear relationship
+cor(reg_data$hdi, reg_data$educ_expected_yrs_f)
+```
+
+So what do you think will happen if we fit a model with both explanatory variables?
+
+-   Will fertility rate have a stronger association with one or the other?
+
+-   Will the coefficient estimates also be highly correlated?
+
+Take a moment to consider this and come up with a hypothesis.
+
+## Multiple Linear Regression: HDI and Education
+
+The model is fit **exactly** the same way as the **SLR models**—the only difference is that instead of using a **single predictor**, we now use **two predictors (HDI and Education).**
+
+```{r,  eval=TRUE}
+# Construct explanatory variable matrix with both predictors
+mlr_fit <- lm(fertility_total ~ hdi + educ_expected_yrs_f, data = reg_data)
+
+# Store results
+summary(mlr_fit)
+```
+
+### Extracting Estimates
+
+```{r,  eval=TRUE}
+# Coefficients
+coef(mlr_fit)
+
+# Standard errors
+sqrt(diag(vcov(mlr_fit)))
+
+# Variance estimate
+sigma_hat2_mlr <- summary(mlr_fit)$sigma^2
+sigma_hat2_mlr
+```
+
+### Coefficient Interpretation
+
+-   The association with HDI is **weaker in the multiple linear model** (around -4.13) compared to the simple linear model (-7.00 when education is not included).
+
+-   Similarly, the association with education is **also weaker** (around -0.20) compared to the simple model (-0.43 when HDI is not included).
+
+This is due to **multicollinearity**, where HDI and education are **highly correlated**. Let's recall the correlation between them:
+
+```{r,  eval=TRUE}
+# Compute correlation between HDI and education
+cor(reg_data$hdi, reg_data$educ_expected_yrs_f)
+```
+
+### Assessing Multicollinearity
+
+```{r,  eval=TRUE}
+# Compute variance-covariance matrix
+vcov_mlr <- vcov(mlr_fit)
+
+# Compute correlation between coefficient estimates
+stderr_mlr <- sqrt(diag(vcov_mlr))
+corr_mx <- diag(1/stderr_mlr) %*% vcov_mlr %*% diag(1/stderr_mlr)
+
+# Display correlation between coefficient estimates
+corr_mx[1,2]  # Correlation between HDI and Education coefficient estimates
+```
+
+### Model Fit and $R^2$ Statistic
+
+The multiple linear regression model captures a little bit more variance than either simple linear regression model individually:
+
+```{r,  eval=TRUE}
+# Compute R-squared
+summary(mlr_fit)$r.squared
+```
+
+### Discussion
+
+-   The MLR model doesn't add much value in terms of fit, so if that is our only concern we might prefer one of the SLR models.
+
+-   However, the presence of additional predictors changes the parameter interpretation -- in the MLR model, the coefficients give the estimated changes in mean fertility rate associated with changes in each explanatory variable after accounting for the other explanatory variable. This is one way of understanding why the estimates change so much in the presence of additional explanatory variables -- the association between, e.g., HDI and fertility, is different than the association between HDI and fertility after adjusting for women's expected education.
+
+-   More broadly, these data are definitely not a representative sample of any particular population of nations -- the countries (observational units) are conveniently chosen based on which countries reported data. So there is no scope of inference here, for any of the models we've fit.
+
+-   Although we can't claim that, for example, 'the mean fertility rate decreases with education at a rate of 0.2 children per woman per expected year of education after accounting for development status', we can say 'among the countries reporting data, the mean fertility rate decreases with education at a rate of 0.2 children per woman per expected year of education after accounting for development status'. This is a nice example of how a model might be used in a descriptive capacity.
+
+# Bootstrap for Estimating Sampling Distribution
+
+The bootstrap method is a **resampling** technique that allows us to estimate the **sampling distribution of a statistic** (such as the **mean**) *without relying on theoretical assumptions*. It is especially useful when the underlying distribution of the data is unknown or difficult to model analytically.
+
+## Bootstrap procedure
+
+The **bootstrap procedure** follows these steps:
+
+1.  **Resample with replacement** from the observed data, creating a new sample of the same size.
+
+2.  **Compute the statistic of interest** (e.g., sample mean) for each resampled dataset.
+
+3.  **Repeat the process** many times (e.g., 1000 iterations) to generate an empirical distribution of the statistic.
+
+4.  **Analyze the results**, including estimating confidence intervals.
+
+## Mini R Example using map_dbl
+
+Before we get into Bootstrapping in R, to make the coding a bit more efficient, we can use the function map_dbl. This function applies a function to each element of a list, and returns a numeric vector (a double or "dbl").
+
+If that is confusing, take a look at the mini example below and observe the output.
+
+```{r, eval=TRUE}
+library(purrr)
+# without tibble and df format
+example_list <- list(10:30, 40:60, 70:90)
+map_dbl(example_list, mean)
+```
+
+```{r, eval=TRUE}
+# understand what it is doing with tibble and df format
+example_df <- tibble(
+  x = list(10:30, 40:60, 70:90)
+)
+
+example_df |> 
+  mutate(means = map_dbl(x, mean))
+```
+
+## Bootstrap Sampling of the Mean Fertility Rate
+
+We will apply the bootstrap method to estimate the **sampling distribution of the mean fertility rate**.
+
+### Step 1: Bootstrap Resampling
+
+We generate **1000 bootstrap samples**, each obtained by randomly resampling (with replacement) from the original dataset.
+
+```{r, eval=TRUE}
+# Load necessary libraries
+library(tibble)
+library(rsample)
+library(ggplot2)
+#library(purrr)
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Create a tibble with fertility rate
+bootstrap_data <- tibble(fertility = reg_data$fertility_total) |> #fertility total for all counties
+  bootstraps(times = 1000) |> 
+  mutate(bootstrap_mean = map_dbl(splits, ~ mean(as_tibble(.)$fertility)))
+
+# Display first few bootstrap sample means
+head(bootstrap_data$bootstrap_mean)
+```
+
+Breaking down each bit of code, tibble(fertility = reg_data\$fertility_total) creates a tibble of one column called fertility, which contains reg_data\$fertility_total. Then, bootstraps(times = 1000) creates 1000 bootstrap resamples of that tibble. This produces a tibble where each row contains an rsplit object in a column named splits (each rsplit is one bootstrap sample). Next, mutate(...) adds a new column called bootstrap_mean that stores the mean fertility value for each bootstrap sample where map_dbl loops over the bootstrap samples and returns the means as numeric vectors.
+
+### Step 2: Visualizing the Bootstrap Distribution
+
+A **histogram** of the **bootstrap sample means** allows us to approximate the sampling distribution.
+
+```{r, eval=TRUE}
+# Plot the bootstrap distribution of sample means
+bootstrap_data |> 
+  ggplot() + 
+  geom_histogram(aes(x = bootstrap_mean), bins = 30, 
+                 fill = "blue", alpha = 0.6) + 
+  geom_vline(aes(xintercept = mean(reg_data$fertility_total)), 
+             col = "red", linetype = "dashed") +
+  labs(title = "Bootstrap Distribution of Sample Mean",
+       x = "Bootstrap Sample Mean",
+       y = "Frequency") 
+```
+
+### Interpretation:
+
+-   The histogram represents the **empirical distribution** of the **sample mean**.
+
+-   The red dashed line represents the **original sample mean**.
+
+-   The bootstrap method provides an **approximation of the sampling distribution**, helping us quantify uncertainty in the sample mean.
+
+## Bootstrap Confidence Intervals
+
+A key application of bootstrap methods is **constructing confidence intervals** for an estimator. We can estimate a 95% confidence interval for **the mean fertility rate** using the **percentile method**.
+
+### Step 3: Computing the 95% Confidence Interval
+
+```{r, eval=TRUE}
+# Compute 95% confidence interval from bootstrap distribution
+ci_boot <- quantile(bootstrap_data$bootstrap_mean, probs = c(0.025, 0.975)) #returns area between 2.5% and 97.5% which gives us the middle 95% of the data (95th percentile)
+ci_boot
+```
+
+### Interpretation:
+
+-   The confidence interval provides a **plausible** range for the **population mean**.
+
+-   Unlike theoretical methods, bootstrap confidence intervals **do not require normality** assumptions. - doesn't relly on mathematical formulas (that relly on the distribution being normal and use the known formula for standard error).
+
+## Question 4: Bootstrap Sampling of the Median Fertility Rate
+
+Instead of the mean,
+
+-   Estimate the **sampling distribution** of the **median fertility rate** using **1000 bootstrap resamples**.
+
+-   Visualize the bootstrap distribution using a **histogram**.
+
+-   **Compare** the bootstrap sample medians with the original sample median.
+
+```{r, eval=TRUE}
+# Set seed for reproducibility
+set.seed(123)
+
+# Create bootstrap resamples and compute median for each
+bootstrap_data_median <- tibble(
+  fertility = reg_data$fertility_total
+) %>%
+  bootstraps(times = 1000) %>%
+  mutate(bootstrap_median = map_dbl(splits, ~median(as_tibble(.x)$fertility))) #When you call bootrsraps(tibble, times = 1000), bootstraps() returns a tibble with at least 2 columns: splits is a list-column; each element is an rsplit object that contains one bootstrap resample (plus its "leftover" rows)
+
+original_median <- median(reg_data$fertility_total)
+
+# Plot the bootstrap distribution of sample medians
+bootstrap_data_median |>
+  ggplot(aes(x = bootstrap_median)) +
+  geom_histogram(fill = "blue", alpha = 0.6) +
+  geom_vline(aes(xintercept = original_median),
+             colour = "red", linetype = "dashed") +
+  labs(
+    title = "Bootstrap Distribution of Sample Median Fertility Rate",
+    x = "Bootstrap Sample Median",
+    y = "Frequency"
+  )
+
+
+```
+
+## Question 5: Bootstrap Confidence Interval for HDI Mean
+
+Now, compute a **95% confidence interval** for the **median fertility rate** using the **1000 bootstrap samples** we have drawn.
+
+```{r, eval =TRUE}
+# Compute 95% confidence interval for the median
+ci_boot_median <- quantile(
+  bootstrap_data_median$bootstrap_median, #takes the numeric vector of the 1000 bootstrap medians from the tibble
+  probs = c(0.025, 0.975)
+)
+
+ci_boot_median
+```
+
+## Summary
+
+-   Bootstrap resampling allows us to estimate the **sampling distribution of a statistic**.
+
+-   The bootstrap confidence interval provides an **empirical way** to quantify estimation uncertainty.
+
+-   This method is particularly useful when **theoretical assumptions** about the data, e.g., properties of the underlying distribution, are **uncertain**.
