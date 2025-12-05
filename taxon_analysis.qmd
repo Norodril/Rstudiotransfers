@@ -1,0 +1,431 @@
+---
+format: 
+  pdf
+html-math-method: mathjax
+execute:
+  eval: true
+---
+
+```{r, echo=FALSE, message=FALSE}
+rm(list = ls())
+library(tidyverse)
+library(corrplot)
+library(patchwork)
+library(ggridges)
+library(colorspace)
+```
+
+```{r}
+diatoms_raw <- read_csv('data/barron-diatoms.csv')
+glimpse(diatoms_raw)
+```
+
+```{r, eval=TRUE}
+diatoms_raw |> #"Now do the next operation on 'diatoms_raw'"
+  summarize(across(A_curv:StephanSpp, ~mean(is.na(.x))))
+#summarize() creates a single row summary of the data
+#across(A_curve: StephanSpp, ...) means apply the following function all columns from 'A_curv' to 'StephanSpp', which are the count columns for the different taxa
+#~ mean(is.na(.x) is the function that gives us the fraction of TRUE's (fraction of nas for each taxa)
+```
+
+```{r, eval=TRUE}
+diatoms1 <- diatoms_raw |> 
+  replace_na(list(
+    A_curv = 0,
+    A_octon = 0,
+    ActinSpp = 0,
+    A_nodul = 0,
+    CoscinSpp = 0,
+    CyclotSpp = 0,
+    Rop_tess = 0,
+    StephanSpp = 0
+  ))
+
+diatoms_mod1 <- diatoms1[94:95, ] #data_frame[rows, columns]
+print(diatoms_mod1)
+```
+
+```{r, eval=TRUE}
+#divide the taxon count for each cell by the num.counted to get the proportion
+diatoms2 <- diatoms1 |> 
+  mutate(
+    across(
+      c(A_curv, A_octon, ActinSpp, A_nodul, CoscinSpp, CyclotSpp, Rop_tess, StephanSpp),
+      ~ .x / Num.counted
+    ),
+    Age = Age * -1 #makes age negative so old samples look smaller
+  )
+
+diatoms2 |> head()
+print(diatoms2)
+```
+
+```{r, eval=TRUE}
+oldest_age <- max(abs(diatoms2$Age))
+newest_age <- min(abs(diatoms2$Age))
+print(c(oldest_age, newest_age))
+```
+
+```{r, eval = TRUE}
+diatoms3 <- diatoms2 |> 
+  arrange(Age) %>% #sorts from most recent samples to the oldest samples (since everything is negative)
+  mutate(Gap = c(NA, diff(Age))) #creates a new column 'Gap'. The first value is NA, and the rest are diff(Age) which computes the difference between age and the one before it
+
+gap_histogram <- ggplot(diatoms3, aes(x = Gap)) +
+  geom_histogram(binwidth = 0.02) +
+  labs(x = "Time step between consecutive samples (Kyr)", y = "Count") +
+  scale_x_continuous(
+    breaks = seq(0, 0.2, by = 0.02), #puts ticks starting at 0 to 0.2 every 0.02 (0, 0.02, 0.04, 0.06, 0.08...)
+    limits = c(0, 0.2) #sets minimum and maximum values shown on the x axis.
+  )
+
+diatoms3
+gap_histogram
+
+```
+
+
+```{r, eval = TRUE}
+diatom_summary <- diatoms3 |> 
+  summarise(
+    A_curve_mean = mean(A_curv, na.rm = TRUE),
+    A_curve_sd = sd(A_curv, na.rm = TRUE),
+    A_octon_mean = mean(A_octon, na.rm = TRUE),
+    A_octon_sd = sd(A_octon, na.rm = TRUE),
+    ActinSpp_mean = mean(ActinSpp, na.rm = TRUE),
+    ActinSpp_sd = sd(ActinSpp, na.rm = TRUE),
+    A_nodul_mean = mean(A_nodul, na.rm = TRUE),
+    A_nodul_sd = sd(A_nodul, na.rm = TRUE),
+    CoscinSpp_mean = mean(CoscinSpp, na.rm = TRUE),
+    CoscinSpp_sd = sd(CoscinSpp, na.rm = TRUE),
+    CyclotSpp_mean = mean(CyclotSpp, na.rm = TRUE),
+    CyclotSpp_sd = sd(CyclotSpp, na.rm = TRUE),
+    Rop_tess_mean = mean(Rop_tess, na.rm = TRUE),
+    Rop_tess_sd = sd(Rop_tess, na.rm = TRUE),
+    StephanSpp_mean = mean(StephanSpp, na.rm = TRUE),
+    StephanSpp_sd = sd(StephanSpp, na.rm = TRUE)
+  )
+
+diatom_summary
+```
+
+```{r, eval = TRUE}
+diatom_summary2_example <- diatom_summary |>
+     pivot_longer(
+        cols = everything(),
+        names_pattern = "(.+)_(mean |sd)$",
+        names_to = c("taxon", "statistic"),
+        values_to = "value_of_stat") |>
+     pivot_wider(names_from = statistic, 
+                 values_from = value_of_stat) 
+
+print(diatom_summary2_example)
+```
+
+```{r, eval = TRUE}
+diatom_summary2_example <- diatom_summary |>
+     pivot_longer( 
+       cols = everything(), #takes all columns from diatom_summary
+       names_pattern = "(.+)_(mean|sd)$", #allows you to split column names into multiple variables using a pattern- 
+       #(.+) grabs everything before the underscore
+       #(mean|sd) matches and grabs "mean" or "sd", which come after the underscore
+       #statistic 
+       names_to = c("taxon", "statistic"), #names for new columns
+       values_to = "value_of_stat"
+     ) |>
+  #But now we have 2 rows per taxon
+  # we want one row per taxon, meaning we condense the "mean" and "sd" values into their own columns using pivot_wider
+  pivot_wider(
+    names_from = statistic,
+    values_from = value_of_stat
+  )
+
+print(diatom_summary2_example)
+```
+
+```{r, eval=TRUE}
+#each taxon will be in its own subplot using facet_wrap
+#reshaping diatoms3 to contain a single taxon column for faceting
+#the values under each taxon are put in another column called "relative_abundance"
+diatoms_long <- diatoms3 |> 
+  pivot_longer(
+    cols = c(A_curv, A_octon, ActinSpp, A_nodul, CoscinSpp, CyclotSpp, Rop_tess, StephanSpp),
+    names_to = "taxon",
+    values_to = "relative_abundance"
+  )
+
+print(diatoms_long)
+
+#Making faceted line plot, removing the gray bar above subplots
+ggplot(diatoms_long, aes(x = Age, y = relative_abundance)) +
+  geom_line() +
+  facet_wrap(~ taxon, scales = "free") +
+  theme_minimal() +
+  theme(strip.background = element_blank()) +
+  labs(x = "Age (Kyr before present)", y = "relative abundance")
+```
+
+```{r, eval = TRUE}
+seatemps <- read_csv('data/barron-sst.csv') |>
+  mutate(Age = -1*Age)
+
+seatemps |> ggplot(aes(x=(-1 * Age), y=SST)) + #x = time period, y = sea surface temperature
+  geom_line() +
+  #Late Glacial Interstadial: 14.7-12.9 kyp BP
+  annotate("rect", xmin = 12.9, xmax = 14.7, ymin = -Inf, ymax = Inf, 
+           fill="#FFD700", alpha = 0.2) +
+  #Younger Dryas: 12.9-11.7
+  annotate("rect", xmin = 11.7, xmax = 12.9, ymin = -Inf, ymax = Inf, 
+           fill="#1E90FF", alpha = 0.2) + 
+  xlab("Thousands of years before present") +
+  theme_bw()
+```
+
+```{r, eval=TRUE}
+diatoms4<- diatoms_long[diatoms_long$taxon == "A_nodul", ] |>
+  mutate(
+    epoch = ifelse(.data$Age < -11.7, "Before 11.7 kyr BP", "After 11.7 kyr BP")
+  )
+  
+diatoms4 |> 
+  ggplot(aes(x = relative_abundance, y = epoch, fill = epoch)) +
+  geom_density_ridges(alpha = 0.6, color = "black") +
+  xlab("Relative abundance of Ezpeitia nodulifera") +
+  ylab("") +
+  theme_bw() +
+  theme(legend.position = "none")
+```
+.
+
+```{r, eval=TRUE}
+loess_fit <- loess(SST ~ Age, 
+                   data = seatemps, span = 0.1)
+#SST is measured in Ages in seatempts, and Diatoms are measured at different Ages in diatoms3 that almost never match exactly
+#the solution is to use the smooth LOESS curve as a "lookup function": for each diatom Age, ask "what SST does the LOESS curve give at this Age?"
+
+
+#this code takes each age in diatoms3, plugs it into loess_fit, gets back a predicted SST, and stores that in a new column 'sst_pred' in diatoms3
+diatoms3 <- diatoms3 |> 
+  mutate(sst_pred = predict(loess_fit, newdata = Age))
+```
+
+```{r, eval=TRUE}
+
+diatoms3 |>
+  ggplot(aes(x = sst_pred, y = A_nodul)) +
+  geom_hex() +
+  scale_fill_viridis_c(option = "C") +
+  xlab("Predicted SST (Celsius)") +
+  ylab("Relative abundance of A. nodulifer") +
+  theme_bw()
+
+
+diatoms3 |>
+  ggplot(aes(x = sst_pred, y = A_octon)) +
+  geom_hex() +
+  scale_fill_viridis_c(option = "C") +
+  xlab("Predicted SST (Celsius)") +
+  ylab("Relative abundance of Actinocyclus octonarius") +
+  theme_bw()
+
+```
+
+```{r, eval = TRUE}
+#correlation matrix of the 8 taxa
+corr_mx <- diatoms3 |> 
+  select(A_curv, A_octon, ActinSpp, A_nodul, CoscinSpp, CyclotSpp, Rop_tess, StephanSpp) %>%
+  #by default, cor() computes the pairwise person correlations
+  #pairwise.complete.obs - only look at rows where both X and Y are non-missing, then compute the correlation from those rows
+  cor(use = "pairwise.complete.obs") 
+
+#Manually creating a diverging palette
+#type of color scale used when data has a meaningful midpoint (0); values below the midpoint are in one color, values above the midpoint are in another color; the midpoint itself is a neutral/white/light color
+my_cols <- diverging_hcl(
+  n = 11,
+  palette = "Blue-Red 3"
+)
+
+#makes each color in the palette 20% lighter
+my_cols_light <- lighten(my_cols, amount = 0.2)
+
+#takes correlation matrix and visualizes it
+corrplot(
+  corr_mx,
+  method = "circle",
+  diag = FALSE,
+  col = my_cols_light,
+  type = "full",
+  tl.col = "black",
+  tl.srt = 45
+)
+```
+
+```{r, eval=TRUE}
+#Standardizes each taxon
+#Since diatoms4 only has a_nodul, I used diatoms_long
+diatoms5 <- diatoms_long |> 
+  group_by(taxon) |>
+  mutate(
+    rel_std = as.numeric(scale(relative_abundance))
+  ) |>
+  ungroup()
+
+#Verifying zero mean and unit variance
+diatoms5 |> 
+  group_by(taxon) |>
+  summarise(
+    mean_rel = mean(rel_std, na.rm = TRUE),
+    sd_rel = sd(rel_std, na.rm = TRUE)
+  )
+
+print(diatoms5)
+```
+
+```{r, eval=TRUE}
+#adding epoch_indicator column
+diatoms5 <- diatoms5 %>%
+  mutate(
+    epoch_indicator = ifelse(abs(Age) <= 11.7, 1, 0)
+  )
+
+#one numeric column per taxon with depth, age, gap, epoch_indicator rather than one column "taxon" that had the taxon names as values
+diatoms5 <- diatoms5 %>%
+  pivot_wider(
+    id_cols = c(Depth, Age, Gap, epoch_indicator),
+    names_from = taxon,
+    values_from = rel_std
+  )
+
+#fits the logistic regression
+logistic_result <- glm(
+  epoch_indicator ~. - Depth - Age - Gap, #this is the model formula; . means "use all other columns in data as predictors
+  #- Depth, -Age, - Gap removes these specific variables from the predictor set
+  data = diatoms5,
+  family = binomial(link = "logit") #specify a logistic regression: binary outcome with logit link function
+)
+
+summary(logistic_result)
+  
+```
+
+```{r, eval = TRUE}
+reg_direction <- coef(logistic_result) #extract coefficients
+reg_direction <- reg_direction[-1] #dropping intercept (first element in the list)
+reg_direction <- reg_direction / sqrt(sum(reg_direction^2)) # normalize
+#- Dividing the vector by it's length makes its new length = 1
+
+print(reg_direction)
+```
+
+```{r, eval=TRUE}
+diatoms_pca <- diatoms5 |> 
+  select(A_curv:StephanSpp)
+#prcomp() runs PCA on the selected columns; center = TRUE makes every variable zero-mean, scale = TRUE makes all variables comparable, regardless of their units or magnitude
+pca_result <- prcomp(diatoms_pca, center = TRUE, scale. = TRUE)
+pc1_direction <- pca_result$rotation[, 1] #the loading matrix, [, 1] selects the first column (PC1)
+print(pc1_direction)
+```
+
+```{r, eval = TRUE}
+pc1_length <- sqrt(sum(pc1_direction^2))
+pc1_length
+
+```
+
+```{r, eval=TRUE}
+reg_n_pc1 <- tibble(
+  taxon = names(reg_direction),
+  reg_abs = abs(reg_direction),
+  pc1_abs = abs(pc1_direction)
+) %>%
+  pivot_longer(
+    cols = c(reg_abs, pc1_abs),
+    names_to = "direction",
+    values_to = "loadings"
+  )
+
+dim(reg_n_pc1)
+print(reg_n_pc1)
+```
+
+```{r, eval = TRUE}
+reg_n_pc1 |>
+  ggplot(aes(x = loadings, y = taxon, color = direction)) +
+  geom_line(aes(group = taxon), linewidth = 2, color = "#999999") + 
+  geom_point(size = 3) +
+  scale_color_manual(values = c("reg_abs" = "#1b9e77",
+                                "pc1_abs" = "purple")) +
+  theme_minimal() +
+  theme(legend.position = "right")
+```
+
+```{r, eval = TRUE}
+diatoms5_matrix <- diatoms5 |> 
+  select(A_curv:StephanSpp) |> #keeps all columns from A_curv through StephanSpp
+  as.matrix() #converts selected columns to a numeric matrix
+
+pc1_score <- diatoms5_matrix %*% pc1_direction # projection
+#%*% is matrix multiplication; computes the dot product of each row with the direction vector
+length(pc1_score) == nrow(diatoms5)
+
+logistic_score <- diatoms5_matrix %*% reg_direction # same projection but a different direction
+length(logistic_score) == nrow(diatoms5)
+
+score_tables <- tibble(ID = 1:nrow(diatoms5),
+                       logistic_score = logistic_score,
+                       pc1_score = pc1_score,
+                       pleistocene = diatoms5[["pleistocene"]])
+```
+
+```{r, eval = TRUE}
+score_tables |> summarize(across(logistic_score:pc1_score, var))
+```
+
+```{r, eval=TRUE}
+
+score_tables <- score_tables |> 
+  mutate(
+    pc1_score = pca_result$x[, 1],
+    pc2_score = pca_result$x[, 2],
+    epoch_indicator = diatoms5$epoch_indicator
+  )
+
+score_tables |> 
+  ggplot(aes(
+    x = pc1_score,
+    y = pc2_score,
+    color = factor(epoch_indicator),
+    shape = factor(epoch_indicator)
+  )) +
+  geom_point(size = 2) +
+  scale_color_brewer(type = 'qual',
+                     name = "Epoch",
+                     labels = c("Pleistocene", "Holocene")
+                    ) +
+  scale_shape_discrete(name = "Epoch",
+                       labels = c("Pleistocene", "Holocene")
+                    ) +
+  theme_minimal()
+  
+```
+
+
+```{r, eval=TRUE}
+score_tables |> 
+  ggplot(aes(
+    x = pc1_score,
+    y = logistic_score,
+    color = factor(epoch_indicator),
+    shape = factor(epoch_indicator)
+  )) +
+  geom_point(size = 2) +
+  scale_color_brewer(type = 'qual',
+                     name = "Epoch",
+                     labels = c("Pleistocene", "Holocene")
+                     ) +
+  scale_shape_discrete(
+    name = "Epoch",
+    labels = c("Pleistocene", "Holocene")
+  )
+  theme_minimal()
+```
