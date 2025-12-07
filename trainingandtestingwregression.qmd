@@ -1,0 +1,198 @@
+---
+date: 11-25-2025
+date-format: full
+format: 
+  pdf:
+    documentclass: scrartcl
+    fontsize: 11pt
+number-sections: false
+execute: 
+  eval: false
+  echo: true
+---
+
+```{r setup, include=FALSE, eval=TRUE}
+knitr::opts_chunk$set(message =  FALSE)
+knitr::opts_chunk$set(warning =  FALSE)
+knitr::opts_chunk$set(error =  FALSE)
+bfcolor <- function(x, color) {
+  if (knitr::is_latex_output()) {
+    sprintf("\\textcolor{%s}{\\textbf{%s}}", color, x)
+  } else if (knitr::is_html_output()) {
+    sprintf("<span style='color: %s;'><b>%s</b></span>", color, x)
+  } else x
+}
+
+# Install necessary libraries if they aren't installed
+if (!require(dplyr)) install.packages("dplyr")
+if (!require(tidyr)) install.packages("tidyr")
+if (!require(ggplot2)) install.packages("ggplot2")
+```
+
+
+```{r, eval=TRUE}
+seda <- read.csv("seda.csv") %>% drop_na()
+
+# Create binary outcome: TRUE if gap > 0, FALSE otherwise
+seda$favors_boys <- seda$gap > 0
+head(seda)
+
+# Keep only math observations and select relevant variables
+reg_data <- seda[seda$subject == "math", 
+                 c("log_income", "favors_boys")]
+```
+
+```{r, eval=TRUE}
+# select 100 indices at random
+seed <- 1234
+set.seed(seed)
+idx <- sample(1:nrow(reg_data), size = 100, replace = FALSE)
+# partition data
+test <- reg_data[idx, ]
+train <- reg_data[-idx, ]
+
+train <- train %>%
+  mutate(income_bracket = cut(log_income, breaks = 10))
+```
+
+
+```{r}
+tbl <- train %>%
+  group_by(income_bracket) %>%
+  summarise(
+    log_income_mean = mean(log_income),
+    favors_boys_mean = mean(favors_boys),
+    favors_boys_std = sd(favors_boys)
+  ) %>%
+  filter(favors_boys_std > 0)  # drop bins with no variation
+
+tbl # display the table
+```
+
+```{r}
+tbl <- tbl %>%
+  mutate(
+    lwr = favors_boys_mean - 0.4 * favors_boys_std,
+    upr = favors_boys_mean + 0.4 * favors_boys_std
+  )
+
+print(tbl)
+```
+
+```{r}
+ggplot(tbl, aes(x = log_income_mean)) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), fill = "blue", alpha = 0.3) +
+  geom_line(aes(y = favors_boys_mean), color = "blue") +
+  geom_point(aes(y = favors_boys_mean), color = "blue") +
+  labs(
+    x = "log income",
+    y = "Pr(math gap favors boys)"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+```{r}
+fit <- glm(
+  favors_boys ~ log_income,
+  data = train,
+  family = binomial(link = "logit")
+)
+
+summary(fit)
+```
+
+
+```{r}
+#A logistic regression model gives you a continuous curve, but the computer can only plot discrete points. So you pick many x values - get predicted y avlues - connect them
+grid_df <- data.frame(
+  log_income = seq(9, 14, length.out = 200)
+)
+grid_df$pred <- predict(
+  fit, # logistic regression results
+  newdata = grid_df,
+  type = "response"   # return predicted probability
+)
+```
+
+
+```{r}
+ggplot(tbl, aes(x = log_income_mean)) +
+  # blue variability band
+  geom_ribbon(aes(ymin = lwr, ymax = upr),
+              fill = "blue", alpha = 0.3) +
+  # blue line for simple averages
+  geom_line(aes(y = favors_boys_mean), color = "blue") +
+  geom_point(aes(y = favors_boys_mean), color = "blue") +
+  # red logistic regression curve
+  geom_line(data = grid_df,
+            aes(x = log_income, y = pred),
+            color = "red", linewidth = 1.1, alpha = 0.7) +
+  labs(
+    x = "log income",
+    y = "Pr(math gap favors boys)",
+    title = "Simple Averages (Blue) vs Logistic Regression Prediction (Red)"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+
+```{r}
+# compute predicted probabilities on test set
+#fit is my trained logistic regression model
+preds <- predict(fit, newdata = test, type = "response")
+
+# construct classifier data frame
+pred_df <- data.frame(
+  observation = test$favors_boys,
+  prediction = preds < 0.5
+)
+
+# preview the first few rows
+print(pred_df)
+```
+
+
+```{r}
+pred_tbl <- table(pred_df$observation, pred_df$prediction)
+pred_tbl
+```
+
+```{r}
+accuracy <- sum(diag(pred_tbl)) / sum(pred_tbl)
+accuracy
+```
+
+
+```{r}
+pred_df$error <- pred_df$observation != pred_df$prediction
+fnr <- mean(pred_df$error[pred_df$observation == TRUE])
+fpr <- mean(pred_df$error[pred_df$observation == FALSE])
+tpr <- 1 - fpr
+tnr <- 1 - fnr
+
+# print the results
+cat("false positive rate: ", fpr, "\n")
+cat("false negative rate: ", fnr, "\n")
+cat("true positive rate (sensitivity): ", tpr, "\n")
+cat("true negative rate (specificity): ", tnr, "\n")
+```
+
+```{r}
+pred_probs <- predict(fit, newdata = test, type = "response")
+
+new_pred_df <- data.frame(
+  observation = test$favors_boys,
+  prediction = ifelse(pred_probs > 0.6, 1, 0) #0.6 is the new threshold
+)
+new_pred_df$error <- new_pred_df$observation != new_pred_df$prediction
+new_fnr <- mean(new_pred_df$error[new_pred_df$observation == TRUE]) #mean of false negatives 
+new_fpr <- mean(new_pred_df$error[new_pred_df$observation == FALSE]) #false positives
+new_tpr <- 1 - new_fnr
+new_tnr <- 1 - new_fpr
+
+# print the error rates
+cat("false positive rate: ", new_fpr, "\n")
+cat("false negative rate: ", new_fnr, "\n")
+cat("true positive rate (sensitivity): ", new_tpr, "\n")
+cat("true negative rate (specificity): ", new_tnr, "\n")
+```
