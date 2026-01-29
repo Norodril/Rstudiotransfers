@@ -1,0 +1,114 @@
+---
+title: "Lab2_PSTAT122"
+author: "Lir Doron"
+date: "2026-01-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+
+2.1 Implementing ANOVA from Scratch
+```{r} 
+anova_from_scratch <- function(df){
+  library(dplyr)
+  #Rename columns for consistency
+  colnames(df) <- c("y", "group")
+  
+  #group by the factor and summarize: mean, variance, count per group
+  summary_stats <- df %>%
+    group_by(group) %>%
+    summarize(
+      y_bar_i = mean(y),
+      s_i = var(y),
+      n_i = n(),
+      .groups = "drop"
+    )
+  #Need the grand mean
+  grand_mean <- mean(df$y)
+  
+  #Need the number of groups (a) and total sample size(N)
+  a <- dim(summary_stats)[1]
+  N <- dim(df)[1]
+  
+  #SSB 
+  SSB <- sum(summary_stats$n_i * (summary_stats$y_bar_i - grand_mean)^2)
+  
+  #SSE
+  SSE <- sum(summary_stats$s_i * (summary_stats$n_i - 1))
+  
+  #Degrees of freedom (can get from a and n
+  df_between <- a - 1
+  df_within <- N - a
+    
+  #Mean Squares
+    MSB <- SSB / df_between
+    MSE <- SSE / df_within
+    
+  #F Statistic
+    F_value <- MSB / MSE
+    
+    #P value
+    p_value <- pf(F_value, df_between, df_within, lower.tail = FALSE)
+    #Now we just need to add those values to a matrix and add the values to a matrix
+    
+    #Construct ANOVA table matrix
+    anova_matrix <- matrix(NA, nrow = 2, ncol = 5)
+    rownames(anova_matrix) <- c("group", "Residuals")
+    colnames(anova_matrix) <- c("Df", "SS", "MS", "F value", "Pr(>F)")
+    
+    #Fill in table
+    #add values to first now
+    anova_matrix[1,] <- c(df_between, SSB, MSB, F_value, p_value)
+    anova_matrix[2, 1:3] <- c(df_within, SSE, MSE)
+    
+    return(anova_matrix)
+}
+```
+
+2.2 Testing on Class Example Dataset
+Lecture 3 Soft Drink Example
+```{r}
+softdrink <- c(5.43, 5.71, 6.22, 6.01, 5.29, 6.24, 
+               6.71, 5.98, 5.66, 6.60, 8.79, 9.20,
+               7.90, 8.15, 7.55)
+y <- as.vector(t(softdrink))
+n = rep(5, 3)
+group = rep(1:3, n)
+data1 = data.frame(y = y, group = factor(group))
+anova_from_scratch(data1)
+```
+
+Reruning the aov function with its summary
+```{r}
+aov_softdrink <- aov(y ~ group, data = data1)
+summary(aov_softdrink)
+```
+This shows that the values are the same, so the ANOVA model from scratch is accurate
+
+2.3 Testing on Homework Dataset
+```{r}
+strength1 <- c(42.5, 40.8, 39.6, 41.2)
+strength2 <- c(45.1, 46.3, 44.0, 45.7)
+strength3 <- c(38.9, 40.1, 41.5, 42.0)
+strength4 <- c(36.2, 37.4, 35.8, 38.0)
+strength <- c(strength1, strength2, strength3, strength4)
+Curing <- factor(rep(c(1, 2, 3, 4), each = 4))
+data2 <- data.frame(strength = strength, mix = Curing)
+anova_from_scratch(data2)
+```
+
+Rerunning the aov function with its summary
+```{r}
+aov_strength <- aov(strength ~ mix, data = data2)
+summary(aov_strength)
+```
+These values are also the same, suggesting that my function is accurate
