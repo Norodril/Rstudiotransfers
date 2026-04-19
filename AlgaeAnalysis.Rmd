@@ -1,0 +1,218 @@
+---
+title: "Homework1_PSTAT131"
+author: "Lir Doron"
+date: "2026-04-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+library(readr)
+library(tidyverse)
+algae <- read_table("algaeBloom.txt", col_names=
+c('season','size','speed','mxPH','mnO2','Cl','NO3','NH4',
+'oPO4','PO4','Chla','a1','a2','a3','a4','a5','a6','a7'),
+na="XXXXXXX")
+glimpse(algae)
+```
+
+1. Descriptive Summary Statistics: Given the lack of further information on the problem domain, it is wise to investigate some of the statistical properties of the data, so as to get a better grasp of the problem. It is always a good idea to start our analysis with some kind of exploratory data analysis. A first idea of the statistical properties of the data can be obtained through a summary of its descriptive statistics.
+(a) Count the number of observations in each season using summarise() in dplyr
+```{r}
+library(dplyr)
+algae %>%
+  group_by(season) %>%
+  summarise(count = n())
+```
+
+(b) Are there missing values in this dataset? Calculate the mean and variance of each chemical (ignore a1 through a7). What do you notice about the magnitude of the 2 quantities for different chemicals?
+```{r}
+sum(is.na(algae)) #total number of NAs
+colSums(is.na(algae)) #number of NAs per column
+```
+
+```{r}
+#Calculating mean and variance of each chemical
+algae %>%
+  select(mxPH, mnO2, Cl, NO3, NH4, oPO4, PO4, Chla) %>%
+  summarise(across(everything(), list(mean = ~mean(., na.rm=TRUE), 
+                                      var = ~var(., na.rm = TRUE))))
+```
+Looking at this, we can srr that the mean and variance differ drastically in magnitude across chemicals. For example, for mxPH: the mean is 8.01 and variance is 0.358, which are both very small/moderate. For mnO2, the mean is 9.12 and variance is 5.72, and for Cl, the mean is 43.6 which is much larger. Some of the quantities are even in the hundreds of thousands. Additionally, the variance tends to grow with the mean, as chemicals with larger mean values tend to have much larger variances. This suggests that the variables are on different scales and are likely right skewed. This shows that raw comparisons across chemicals are misleading, anf scaling/normalization may be needed before modeling. 
+
+(c) Mean and variance is one measure of central tendency and spread of the data. Median and Meadian Absolute Deviation are alternative measures of central tendency and spread. 
+For a univariate data set X1, X2, ..., Xn, the Median Absolute Deviation (MAD) is defined as the median of the absolute deviations from the data's median. MAD = median(|Xi - median(X)|).
+Compute median and MAD of each chemical and compare the 2 sets of quantities (ie. mean and variance vs. median & MAD). What do you notice?
+
+```{r}
+#Computes the median across all water samples for each chemical as well as the Median Absolute Deviations (how spread out the typical water samples are; how far is every chamical level from the middle value)
+algae %>%
+  select(mxPH, mnO2, Cl, NO3, NH4, oPO4, PO4, Chla) %>%
+  summarise(across(everything(), list(
+    median = ~median(., na.rm = TRUE),
+    MAD = ~median(abs(. - median(., na.rm = TRUE)), na.rm = TRUE)
+    )))
+```
+For chemicals like mcPH and mnO2, the mean and median are very close, and the variance and MAD are similar as well, meaning these chemicals don't have many extreme values. However, for chemicals like NH4, PO4, and Cl, the mean is much larger than the median and the variance is much larger than the MAD. This is because a few water samples had extremely high chemical levels that pull the mean and variance up, while the median and MAD are not affected by those extreme values. This suggests that median and MAD are better measures for describing these chemicals since they give a more accurate picture/description of the typical/average water sample.
+
+
+
+2. Data Visualization: Most of the time, the information in the data set is also well captures graphically. Histogram, scatter plot, boxplot, QQ plot are frequently used tools for data visualization. Use ggplot for all of these visualizations.
+
+a. Produce a histogram of NH4 with the title "Histogram of NH4" based on algae data set. Use an appropriate argument to show the probability instead of the frequency as the vertical axis. Is the distribution skewed?
+
+```{r}
+ggplot(algae, aes(x = NH4, y = after_stat(density))) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") + 
+  labs(title = "Histogram of NH4", x = "NH4", y = "Density") +
+  theme_minimal()
+``` 
+This histogram answers "out of 200 water samples, how many had low vs high ammonium concentrations?"
+The distribution is extremely right-skewed, since the vast majority of observations are clustered near 0, but there are a few extreme outliers stretching all the way out to ~25,000. The outliers are so extreme that they compress everything else to the left, making the graph appear the way it does. This connects back to part 1 where we found that NH4's mean was much larger than its median, which only happes whn extreme high values pull the mean up. 
+
+b. Add a density curve using geom_density() and rug plots using geom_rug() to above histogram
+
+```{r}
+ggplot(algae, aes(x = NH4, y = after_stat(density))) + #start a plot using the algae dataset, Put the number of rivers with that NH4 on the x axis, and density on the y axis instead of counts
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") + #draw 30 bars, group the 200 water samples into 30 ranges of NH4 values
+  geom_density(color = "red") + #draw a smooth red curve over the histogram that shows the overall shape of the distribution. 
+  geom_rug(aes(y = NULL), alpha = 0.3) +  #draw a tiny tick mark at the bottom for each of the 200 water samples, y = NULL means ignore the y axis here, and just use x
+  labs(title = "Histogram of NH4", x = "NH4", y = "Density") +
+  theme_minimal()
+```
+
+
+c. Create a boxplot with the title 'A conditioned Boxplot of Algal a4' for a4 grouped by speed. What do you notice?
+
+```{r}
+ggplot(algae, aes(x = speed, y = a4)) + #start a plot using the algae dataset, put the speed category on the x axis and the a4 frequency on the y axis
+  geom_boxplot(fill = "lightgreen") + #draw a box plot for each spreed group, filled with light green
+  labs(title = "A conditioned Boxplot of Algal a4", x = "Speed", y = "a4") + 
+  theme_minimal()
+```
+
+Interpretation: Each boxplot contains the bottom line of box = 25th percentile, middle line (median/middle value), top line (75th percentile), whiskers (range of typical values), and dots (outliers). From the above graph, it is evident that all 3 speed groups have very similar and low medians (near 0), medium speed rivers have the most spread and the biggest outlier of around 45, high and low speed rivers have smaller outliers, and overall, river speed doesn't seem to strongly affect a4 levels since the median/graphs are similar. 
+
+3. Dealing with missing values
+a) How many observations contain missing values? How many missing values are there in each variable?
+
+```{r}
+#counting missing values
+sum(!complete.cases(algae)) # complete.cases() returns TRUE for rows with no missing values, so !complete.cases() flips it to flag rows with missing values. 
+colSums(is.na(algae)) #is.na(algae) turns dataset into a matrix of TRUE/FALSE values
+#each cell becomes TRUE if the value is NA and FALSE if there is a value there
+#colsums adds values by column- how many missing values per column
+```
+
+
+b) Removing observations with missing values: use filter() function in dplyr package to observations with any missing value, and save the resulting dataset (without missing values) as algae.del. Report how many observations are in algae.del.
+Hint: complete.cases() might be useful
+
+```{r}
+#Keeps only rows where all values are present
+algae.del <- algae %>% #new dataset algae.del
+  filter(complete.cases(.)) #keeps only rows where rows have no missing values
+
+#how many observations remain?
+nrow(algae.del) #counts how many rows are in the new dataset
+```
+
+Linear Regression: In this problem, we will make use of the Auto data set, which is part of the ISLR package and can be directly accessed by the name Auto once the ISLR package is loaded. The dataset contains 9 variables of 392 observations automobiles. The qualitative variable origin takes 3 values: 1,2 and 3, where 1 stands for American car, 2 stands for European car, and 3 stands for Japanese car.
+
+1. Fit a linear model to the data, in order to predict mpg using all of the other predictors except for name. Present the estimated coefficients. With a 0.01 threshold, comment on whether you can reject the null hypothesis that there is no linear association between mpg with any of the predictors. 
+```{r}
+library(ISLR)
+data(Auto)
+
+#fitting linear model predicting mpg using all predictors except name
+lmod <- lm(mpg ~ cylinders + displacement + horsepower + weight + acceleration + year + origin, data = Auto)
+
+#estimated coefficients
+coefficients(lmod)
+
+#full summary
+summary(lmod)
+```
+
+Looking at the following output- F statistic: 252 on 7 and 384 DF, p-value < 2e-16, we reject the null hypothesis that there is no linear association between mpg and any of the predictors. This means that at least once predictor has a statistically significant linear relationship with mpg. 
+
+Individual coefficients that are significant at the 0.01 level: 
+- displacement (p = 0.00844)
+- weight (p < 2e-16)
+- year (p < 2e-16)
+- origin (p = 3.7e-07)
+
+
+2. Take the whole dataset as training set. What is the training meas squared error of this model? Can you calculate the test mean squared error?
+
+```{r}
+#Training MSE 
+y <- Auto$mpg
+y_hat <- fitted(lmod)
+training_MSE <- mean((y - y_hat)^2)
+training_MSE
+```
+The training MSE is 10.8, measuring how well the model fits the data it was already trained on. Since we used the entire Auto dataset to fit the model, there are no observations left over to test on, so we cannot calculate the test MSE in this situation. In order to get a test MSE we would have needed to set aside some data before fitting the model. 
+
+
+3. What gas mileage do you predict for a European car with 4 cylinders, displacement 133, horsepower of 117, weight of 3250, acceleration of 29, built in the year 1997 (Be sure to check how year is coded in the dataset)
+```{r}
+new_car <- data.frame(cylinders = 4,
+                      displacement = 133,
+                      horsepower = 117,
+                      weight = 3250,
+                      acceleration = 29,
+                      year = 97,
+                      origin = 2)
+predict(lmod, newdata = new_car)
+```
+The model predicts a gas mileage of 38.4mpg for this European car
+
+
+4. One average, holding all other features fixed, what is the difference between the mpg of a Japanese car and the mpg of an American car? What is the difference between the mpg of a European car and the mpg of an American car?
+
+```{r}
+coef(lmod)["origin"] * 2 #Japanese vs American
+coef(lmod)["origin"] * 1 #European vs American
+```
+
+5. On average, holding all other predictor variables fixed, what is the change in mpg associated with a 30-unit increase in horsepower? 
+```{r}
+coef(lmod)["horsepower"] * 30
+```
+On average holding all other predictors fixed, a 30 unit increase in horsepower is associated with a decrease of -0.509mpg
+
+
+Bias Variance Tradeoff
+In Lecture we present the bias-variance tradeoff that takes the form
+$$E\left[(y - \hat{f}(x))^2\right] = \text{Bias}^2[\hat{f}(x)] + \text{Var}[\hat{f}(x)] + \sigma^2$$
+Where the underlying model Y = f(X) + e satisfies
+1. e is a zero-mean random noise, and X is non-random (all randomness in Y comes from e)
+2. (x0, y0) is a test observation, independent of the training set, and drawn from the same model
+3. f(*) is the estimate of f obtained on a training set
+
+
+1. Which of the term(s) in the bias-variance tradeoff above represent the reducible error? Which terms represent the irreducable error?
+The Variance and bias terms are reducible since they depend on our choice of model and we can improve them by choosing a better/more appropriate model, getting more training data, or tuning model complexity. The Var(epsilon) term represents the irreducable error since it represents the inherent noise in the data generating process. No matter how good the model is, we can never eliminate it. 
+
+2. Use the bias-variance tradeoff above to show that the expected test error is always at least as large as the irreducible error.
+
+In order to show that the expected test error is always at least as large as Var(e), since variance is always non-negative, we know 
+$$\text{Var}(\hat{f}(\mathbf{x}_0)) \geq 0 \quad \text{and} \quad \left[\text{Bias}(\hat{f}(\mathbf{x}_0))\right]^2 \geq 0$$
+Therefore, starting from the bias-variance decomposition:
+$$E\left[\left(y_0 - \hat{f}(\mathbf{x}_0)\right)^2\right] = \text{Var}(\hat{f}(\mathbf{x}_0)) + \left[\text{Bias}(\hat{f}(\mathbf{x}_0))\right]^2 + \text{Var}(\varepsilon)$$
+
+Since 
+$$\text{Var}(\hat{f}(\mathbf{x}_0)) + \left[\text{Bias}(\hat{f}(\mathbf{x}_0))\right]^2 \geq 0$$, it follows that:
+
+$$E\left[\left(y_0 - \hat{f}(\mathbf{x}_0)\right)^2\right] \geq \text{Var}(\varepsilon)$$
+Thus, the expected test error is always at least as large as the irreducible error. 
