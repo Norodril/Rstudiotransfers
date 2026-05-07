@@ -1,0 +1,308 @@
+---
+title: "HW2_PSTAT131"
+author: "Lir Doron"
+date: "2026-04-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Algae Classification using Logistic Regression
+
+Begin with the following Code
+```{r}
+algae <- read_table("/Users/lirdoron/Downloads/algaeBloom.txt", col_names = c('season','size','speed','mxPH','mnO2','Cl','NO3','NH4','oPO4','PO4','Chla','a1','a2','a3','a4','a5','a6','a7'), na = "XXXXXXX")
+
+```
+
+In homework 1, we investigated basic exploratory data analysis for the 'algaeBloom' dataset. One of the explaining variables is a1, which is a numerical attribute. Here, after standardization, we will transform a1 into a categorical variable with 2 levels: high and low, and conduct classification using those 11 variables (ie. everything but a1, a2, a3, ..., a7)
+
+We first improve the normality of the numerical attributes by taking the log of the chemical variables. After log transformation, we impute missing values using the median method. Finally, we transform the variable a1 into a categorical variable with 2 levels: high if a1 is greater than 5, and low if a1 is smaller than or equal to 5
+
+```{r}
+algae.transformed <- algae %>% mutate_at(vars(4:11), funs(log(.)))
+algae.transformed <- algae.transformed %>%
+  mutate_at(vars(4:11),funs(ifelse(is.na(.), median(.,na.rm=TRUE),.)))
+#a1 == 0 means low
+algae.transformed <- algae.transformed%>% mutate(a1 = factor(as.integer(a1 > 5), levels = c(0, 1)))
+```
+
+Classification Task: We will build classification models to classify a1 into high vs low using the dataset algae.transformed as above and evaluate its training and test error rates. We define a new function, named calc_error_rate(), that will calculate misclassification error rate. 
+```{r}
+calc_error_rate <- function(predicted.value, true.value){
+  return(mean(true.value != predicted.value))
+}
+```
+
+Training/test sets: Split randomly the data in a train and a test set:
+```{r}
+set.seed(1)
+test.indices = sample(1:nrow(algae.transformed), 50)
+algae.train = algae.transformed[-test.indices,]
+algae.test = algae.transformed[test.indices,]
+```
+
+In a binary classification problem, let p represent the probability of class label "1", which implies that 1-p represents probability of class label "0". The logistic function(also called the "iverse logit") is the cumulative distribution function of logistic distributions, which maps a real number z to the open interval (0, 1):
+
+$$p(z) = \frac{e^z}{1 + e^z}$$
+1. Prove that indeed the inverse of a lagistic function is the logit function
+z(p) = ln(p / 1-p)
+
+2. Assume that z = B0 + B1x1, and p = logistic(z). How does the odds of the outcome change if you increase x1 by 2? Assume B1 is negative: What value does p approach as x1 approaches infinity? What value does p approach as x1 approaches -infinity?
+
+3. Use logistic regression to perform classification in the data application above. Logistic regression specifically estimates the probability that an observation as a particular class label. We can define a probability threshold for assigning class labels based on the probabilities returned by the glm fit.
+In this problem, we will simply use the "majority rule". If the probability is larger than 50% class as label "1". Fit logistic regression to predict a1 given all other features (excluding a2 to a7) in the dataset using the glm function. Estimate the class labels using the majority rule and calculate the training and test errors using the 'calc_error_rate' defined earlier. For logistic regression one needs to predict type response 
+
+```{r}
+#Fit logistic regression on training data
+#Use all features except a2-a7 (keep season, size, speed, mcPH, mn02, Cl, N03, NH4, oP04, P04, Chla, and a1 as response)
+glm.fit <- glm(a1 ~ season + size + speed + mxPH + mnO2 + Cl + NO3 + NH4 + oPO4 + PO4 + Chla,
+               data = algae.train,
+               family = binomial)
+
+#Predicting probabilities on training set
+train.probs <- predict(glm.fit, algae.train, type = "response")
+
+#Predict probabilities on test set
+test.probs <- predict(glm.fit, algae.test, type = "response")
+
+#"1" if probability > 0.5, else "0"
+train.pred <- factor(as.integer(train.probs > 0.5), levels = c(0, 1))
+test.pred <- factor(as.integer(test.probs > 0.5), levels = c(0, 1))
+
+#Calculate training and test error rates
+train.error <- calc_error_rate(train.pred, algae.train$a1)
+test.error <- calc_error_rate(test.pred, algae.test$a1)
+
+#Printing outputs
+cat("Training error rate:", train.error, "\n")
+cat("Test error rate: ", test.error, "\n")
+```
+
+4. We will construct ROC curve based on the predictions of the test data from the model we obtained from the logistic regression above. Plot the ROC for the test data for the logistic regression fit. Compute the area under the curve (AUC)
+Hints: In order to construct the ROC curves one needs to use the vector of predicted probabilities for the test data. The usage of the function 'predict()' may be different from model to model. For logistic regression one needs to predict the type 'response'. 
+```{r}
+#loading packages
+library(pROC)
+
+#Use the test probabilities already predicted
+#Builds the ROC curve by sweeping thresholds from 0 to 1
+roc.curve <- roc(algae.test$a1, test.probs)
+
+#Plot the ROC curve
+#Sensitivity (True Positive Rate)
+#Specificity (True Negative Rate)
+plot(roc.curve, main = "ROC Curve- Logistic Regression", col = "blue")
+
+#Computing and printing AUC
+#AUC = Probability that the model ranks a random high case above a random low case
+auc.val <- auc(roc.curve)
+cat("AUC:", auc.val, "\n")
+```
+
+Algae Classification using Discriminant Analysis 
+1. In LDA we assume that the covariance matrices are assumed to be the same for both classes (high a1 and low a1). Use LDA to predict whether a1 is high or low using the MASS::lda() function. The CV argument in the MASS::lda function uses Leave-one-out cross validation LOOCV) when estimating the fitted values to avoid over fitting. Set the CV argument to true, so the program will automatically do cross validation. Plot the ROC curve for the fitted data. 
+
+```{r}
+library(MASS) #gives the LDA function
+library(pROC) #allows for building ROC curves
+
+#fitting LDA with LOOCV
+#"How well would this model perform if I used it on unseen data?"
+lda.fit <- lda(a1 ~ season + size + speed + mxPH + mnO2 + Cl + NO3 + NH4 + oPO4 + PO4 + Chla,
+               data = algae.train,
+               CV = TRUE)
+
+#LDA with CV=TRUE gives posterior probabilities directly on training data
+#get probability of class "1" (high)
+lda.train.probs <- lda.fit$posterior[, "1"]
+
+#convert probabilities into labels
+lda.train.pred <- factor(as.integer(lda.train.probs > 0.5), levels = c(0, 1))
+
+#calculate training error
+lda.train.error <- calc_error_rate(lda.train.pred, algae.train$a1)
+cat("LDA Training error rate:", lda.train.error, "\n")
+
+#for test error, fit LDA without CV
+#"Now give me the best possible model using all training data"
+lda.fit.test <- lda(a1 ~ season + size + speed + mxPH + mnO2 + Cl + NO3 + NH4 + oPO4 + PO4 + Chla,
+                    data = algae.train)
+
+#predict on test set
+lda.test.pred.obj <- predict(lda.fit.test, algae.test)
+#get test probabilities (probability each test point is in class 1)
+lda.test.probs <- lda.test.pred.obj$posterior[, "1"]
+#Convert test probabilities to class labels
+lda.test.pred <- factor(as.integer(lda.test.probs > 0.5), levels = c(0, 1))
+
+#calculate test error
+lda.test.error <- calc_error_rate(lda.test.pred, algae.test$a1)
+cat("LDA Test error rate:", lda.test.error, "\n")
+
+#plot ROC curve for test data
+lda.roc <- roc(algae.test$a1, lda.test.probs)
+plot(lda.roc, main = "ROC Curve - LDA", col = "red", lwd = 2)
+#Computing AUC 
+auc.lda <- auc(lda.roc)
+cat("LDA AUC:", auc.lda, "\n")
+```
+
+2. Quadratic discriminant analysis is strictly more flexible than LDA since it is not required that both covariance matrices be equal. In this sense, LDA can be considered a special case of QDA with the covariances constained to be the same. Use a quadratic discriminant model to predict the a1 using the function MASS::qda. Again setting CV = TRUE and plot the ROC on the same plot as the LDA ROC. Compute the area under the ROC (AUC) for each model. To get the predicted class probabilities look at the value of 'posterior' in the 'lda' and 'qda' objects. Which model has better performance? Briefly explain, in terms of the bias and variance tradeoff, why you believe the better model outperforms the worse model?
+
+```{r}
+#fitting QDA with LOOCV
+qda.fit <- qda(a1 ~ season + size + speed + mxPH + mnO2 + Cl + NO3 + NH4 + oPO4 + PO4 + Chla,
+               data = algae.train,
+               CV = TRUE)
+
+#get vector of probability of class "1" (high) from LOOCV
+qda.train.probs <- qda.fit$posterior[, "1"]
+
+#turns probabilities into actual class predictions
+qda.train.pred <- factor(as.integer(qda.train.probs > 0.5), levels = c(0, 1))
+
+#Calculate training error
+qda.train.error <- calc_error_rate(qda.train.pred, algae.train$a1)
+cat("QDA Training error rate:", qda.train.error, "\n")
+
+#For test error, fitting QDA without CV
+qda.fit.test <- qda(a1 ~ season + size + speed + mxPH + mnO2 + Cl + NO3 + NH4 + oPO4 + PO4 + Chla,
+                    data = algae.train)
+
+#Predicting on test set
+#taking trained quadratic discriminant analysis model, and applying it to new data
+qda.test.pred.obj <- predict(qda.fit.test, algae.test)
+#Extracting probabilities for class 1
+qda.test.probs <- qda.test.pred.obj$posterior[, "1"]
+#converting probabilities to class predictions
+qda.test.pred <- factor(as.integer(qda.test.probs > 0.5), levels = c(0, 1))
+
+#Calculating test error
+#Comparing predicted classes on test data to the true labels
+qda.test.error <- calc_error_rate(qda.test.pred, algae.test$a1)
+cat("QDA Test error rate:", qda.test.error, "\n")
+
+#Plot both ROC curves on the same plot
+qda.roc <- roc(algae.test$a1, qda.test.probs)
+
+#plotting LDA ROC first then adding QDA on top
+plot(lda.roc, main = "ROC Curves - LDA vs QDA", col = "red")
+plot(qda.roc, col = "blue", add = TRUE)
+
+#adding legend
+legend("bottomright", legend = c("LDA", "QDA"), col = c("red", "blue"))
+
+#compute and print AUC for both
+auc.lda <- auc(lda.roc)
+auc.qda <- auc(qda.roc)
+cat("LDA AUC:", auc.lda, "\n")
+cat("QDA AUC:", auc.qda, "\n")
+```
+
+LDA AUC: 0.852, QDA AUC: 0.812, so LDA performs better on this dataset. QDA is more flexible than LDA (it allows each class to have its own covariance matrix), which means it has a lower bias but higher variance. With a small dataset like this that extra variability hurts QDA since there isn't enough data for QDA to reliably estimate all the extra parameters it needs, so QDA ends up overfitting to the training data and performs worse on the test data. LDA is simpler (assumes both classes have the same covariance), which means it has higher bias but lower variance. In this class, that simplicity is actually an advantage since the dataset is small, so LDA doesn't try to estimate as many parameters, so it generalized better to new data. 
+-With smaller datasets, simpler models are better since more flexible models don't have enough data to learn properly without overfitting.
+
+Fundamentals of the Bootstrap
+In this problem, we will explore to understand the fact that approximately 1/3 of the observations in a bootstrap sample are out-of-bag. (some observations get picked multiple times, some don't get picked at all; those observations that are not selected in the bootstrap sample are caled out of bag observations).
+
+
+1. Given a sample of size n, what is the probability that any observation j is not in a bootstrap sample? Express your answer as a function of n. 
+
+2. Compute the above probability for n = 1000
+
+3. Verify that your calculation is reasonable by resampling the numbers 1 to 1000 with replacement and printing the ratio of missing observations. 
+
+Hint: Use the 'unique' and 'length' functions to identify how many unique observations are in the sample. Note that the answer does not have to be exactly the same as what you get in b) due to randomness in sampling. 
+```{r}
+set.seed(1)
+
+#resampling numbers 1 to 1000 with replacement
+bootstrap_sample <- sample(1:1000, size = 1000, replace = TRUE)
+
+#finding how many unique observations were selected
+#unique(bootstrap_sample) only keeps the distinct numbers that showed up at least once
+unique_selected <- length(unique(bootstrap_sample))
+
+#Number of missing observations (out of bag) 
+missing <- 1000 - unique_selected
+#total = seen at least once + never seen
+#1000 = unique_selected + missing 
+#missing = 1000 - unique_selected
+
+#ratio of missing observations
+ratio_missing <- missing / 1000
+
+cat("Number of unique observations selected:", unique_selected, "\n")
+cat("Number of missing observations:", missing, "\n")
+cat("Ratio of missing observations:", ratio_missing, "\n")
+```
+
+Since the ratio of missing observations in this case (0.366) is similar to the probability for question 2, (0.3677), the calculation is reasonable. The small difference here is likely due to sampling variation ("the answer does not have to be exactly the same due to randomness in sampling"). 
+
+Cross-Validation Estimate of Test Error:
+In this problem, we will apply cross-validation to estimate test error rate of logistic regression on the 'Smarket' dataset available in ISLR package. The dataset contains daily percentage returns for the S&P 500 stock index between 2001 and 2005. In particular, the data contains 1250 observations on the following 9 variables:
+Year: the year that the observation was recorded
+Lag1: Percentage return for previous day
+Lag2: Percentage return for 2 days previous
+Lag3: Percentage return for 3 days previous
+Lag4: Percentage return for 4 days previous
+Lag5: Percentage return for 5 days previous
+Volume: Volume of shares traded (number of daily shares traded in billions)
+Today: Percentage return for today
+Direction: A factor with levels 'down' and 'up' indicating whether the market had a positive or negative return on a given day
+We are interested in building a classifier in order to predict 'Direction' using all variables except for 'Year' and 'Today'as predictors. We do the following transformation to convert the factor response into binary values: 0 for 'Down' and 1 for 'Up'
+
+```{r}
+library(ISLR)
+dat = subset(Smarket, select = -c(Year, Today))
+dat$Direction = ifelse(dat$Direction == "Up", 1, 0)
+```
+
+In this problem, we will again simply use the "majority rule". If the predicted probability is larger than 50%, classify the observation as 1. 
+1. Split 'dat' into a training set of 700 observations, and a test set of the remaining observations. Fit a logistic regression model, on the training data, to predict the 'Direction' using all other variables except for 'Year' and 'Today' as predictors. Calculate the error rate of this model on the test data. Use 'set.seed(123) in the beginning of your answer.
+
+```{r}
+set.seed(123)
+#Splitting into training (700) and testing (Remaining)
+train_indices <- sample(1:nrow(dat), 700)
+train_dat <- dat[train_indices, ]
+test_dat <- dat[-train_indices, ]
+
+#Fitting logistic regression on training data
+glm.fit <- glm(Direction ~ ., data = train_dat, family = binomial)
+
+#Predicting on test data
+test.probs <- predict(glm.fit, test_dat, type = "response")
+test.pred <- factor(as.integer(test.probs > 0.5), levels = c(0, 1))
+
+#Calculate test error
+test.error <- calc_error_rate(test.pred, factor(test_dat$Direction, levels = c(0, 1)))
+cat("Test error rate:", test.error, "\n")
+```
+
+~49.7% of test observations were classified incorrectly - poor performance
+
+2. Use a 10 fold cross-validation approach on the whole 'dat' to estimate the test error rate. Report the estimated test error rate you obtain. Use 'set.seed(123)' in the beginning of your answer.
+
+```{r}
+set.seed(123)
+library(caret)
+
+#10 fold cross validation
+cv_control <- trainControl(method = "cv", number = 10)
+
+cv_model <- train(factor(Direction) ~.,
+                  data = dat,
+                  method = "glm",
+                  family = binomial,
+                  trControl = cv_control)
+
+cat("10-fold CV test error rate:", 1 - cv_model$results$Accuracy, "\n")
+```
+
+On average, across the 10 folds, ~49.7% of observations were incorrectly classified. 
+
+
