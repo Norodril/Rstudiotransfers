@@ -1,0 +1,171 @@
+---
+title: "PredictionAnalysis"
+author: "Lir Doron"
+date: "2026-05-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#loading packages
+library(tidyverse) 
+library(ISLR) 
+library(glmnet) 
+library(tree) 
+library(maptree) 
+library(randomForest) 
+library(gbm) 
+library(ROCR)
+```
+
+```{r}
+set.seed(123)
+
+#split for train data
+dat <- model.matrix(Sales~., Carseats)  #converts data into a pure number table
+#randomly pick 50 rows for traing
+train = sample(nrow(dat), 50)
+x.train = dat[train, ]
+y.train = Carseats[train, ]$Sales
+
+# The rest as test data
+x.test = dat[-train, ]
+y.test = Carseats[-train, ]$Sales
+```
+
+```{r}
+set.seed(123)
+
+#defining lambda grid
+lambda_grid = 10^seq(10, -2, length = 100)
+
+#fitting ridge regression (alpha = 0 : ridge)
+ridge.cv = cv.glmnet(x.train, y.train,
+                     alpha = 0,
+                     lambda = lambda_grid,
+                     nfolds = 5)
+
+#best lambda
+best_lambda = ridge.cv$lambda.min
+cat("Best lambda:", best_lambda, "\n")
+
+#refit on training data with best lambda
+ridge.mod = glmnet(x.train, y.train,
+                   alpha = 0,
+                   lambda = best_lambda)
+
+#report coefficients
+predict(ridge.mod, type = "coefficients", s = best_lambda)
+```
+
+
+
+```{r}
+#Training MSE
+ridge.train.pred = predict(ridge.mod, s = best_lambda, newx = x.train)
+train.mse = mean((ridge.train.pred - y.train)^2)
+cat("Training MSE:", train.mse, "\n")
+
+#test MSE
+ridge.test.pred = predict(ridge.mod, s = best_lambda, newx = x.test)
+test.mse = mean((ridge.test.pred - y.test)^2)
+cat("Test MSE:", test.mse, "\n")
+```
+
+
+```{r}
+set.seed(123)
+
+#fitting LASSO regression on training data (alpha = 1 : lasso)
+lasso.cv = cv.glmnet(x.train, y.train,
+                     #xtrain = matrix of predictor variables
+                     #ytrain = response
+                     alpha = 1, #LASSO
+                     lambda = lambda_grid,
+                     nfolds = 10)
+
+#best lambda
+best_lambda_lasso = lasso.cv$lambda.min #lambda with minimum CV error
+cat("Best lambda:", best_lambda_lasso, "\n")
+
+#refit on training data with best lambda
+lasso.mod = glmnet(x.train, y.train,
+                   alpha = 1,
+                   lambda = best_lambda_lasso)
+
+#coefficients
+predict(lasso.mod, type = "coefficients", s = best_lambda_lasso)
+```
+
+
+```{r}
+#Training MSE
+lasso.train.pred = predict(lasso.mod, s = best_lambda_lasso, newx = x.train)
+train.mse.lasso = mean((lasso.train.pred - y.train)^2)
+cat("Training MSE:", train.mse.lasso, "\n")
+
+#Test MSE
+lasso.test.pred = predict(lasso.mod, s = best_lambda_lasso, newx = x.test)
+test.mse.lasso = mean((lasso.test.pred - y.test)^2)
+cat("Test MSE:", test.mse.lasso, "\n")
+
+#comparing with ridge regression
+cat("\nComparison\n")
+cat("Ridge Training MSE:", train.mse, "\n")
+cat("Ridge Test MSE:", test.mse, "\n")
+cat("Lasso Training MSE:", train.mse.lasso, "\n")
+cat("Lasso Test MSE:", test.mse.lasso, "\n")
+```
+
+
+```{r}
+set.seed(123)
+
+#original data: 1 = missed, 0 = missed
+shots = c(rep(1, 98), rep(0, 104)) #98 made, 104 missed out of 202
+
+#bootstrap
+n.boot = 10000
+boot.fg = numeric(n.boot)
+
+#randomly samples from shots, each bootstrap sample has 202 observations (sampling with replacement)
+for(i in 1:n.boot){
+  boot.sample = sample(shots, size = length(shots), replace = TRUE)
+  boot.fg[i] = mean(boot.sample) #The proportion of made shots
+}
+#boot.fg contains 10,000 simulated FG% (how often he makes his shots attempted)
+
+#99% CI
+ci = quantile(boot.fg, probs = c(0.005, 0.995))
+cat("99% Bootstrap Confidence Interval for Jalen Brunson's FG%: \n")
+cat("Lower Bound:", round(ci[1], 4), "\n")
+cat("Upper Bound", round(ci[2], 4), "\n")
+  
+```
+
+
+Comments on Findings: The optimal lambda chosen by CV was 0.0933- meaning the model applies mild shrinkage to the coefficients. Additionally, the most influential predictors are ShelveLocGood, ShelveLocMedium, HighYes, Price, and  Population. The training MSE was 0.413, while the test MSE was 1.13- the model learned the training data fairly well but struggles somewhat to generalize. A test MSE of 1.13 means predictions are off by ~sqrt(1.13) = 1.06 units of sales on average, which is relatively reasonable. 
+
+LASSO determined that 'USYes' does not provide enough additional predictive information after accounting for the other predictors: Once variables like Price, ShelveLoc, Advertising, Income, etc. are already included, knowing whether the store is in the US does not meaningfully improve prediction accuracy.
+
+The LASSO model slightly outperformed ridge regression, as it had a lower training MSE (0.39 vs 0.413) and lower test MSE (1.06 vs 1.13), indicating better predictive performance and generalization. It also performed variable selection by shrinking 'USYes' to zero, producing a simpler and more interpretable model. 
+
+
+Both Ridge and Lasso regression produced similar results in this application, which is expected given the small number of predictors (11 variables). The most notable difference is that Lasso set the coefficient for 'USYes' exactly to 0, effectively removing it from the model, while Ridge kept it at a small value of -0.0167. This suggests that whether a store is located in the US adds little predictive power for Sales. Both models agreed that 'ShelveLocGood', 'HighYes', and 'ShelveLocMedium' were the strongest predictors of Sales. The optimal lambda for Ridge (0.0933) was larger than for Lasso (0.0175), meaning Ridge applied more shrinkage overall. In terms of MSE, both models performed comparably on the test set, which again is expected since Lasso only removed one weaker predictor. In this application Lasso has a slight edge in interpretability as it performed automation variable selection, but with only 11 predictors the 2 methods are largely equivalent. Lasso's advantage over Ridge comes much more apparent in high dimensional settings where there are 100s of predictors and many of them are not relevant. 
+
+Significant predictors of nicotine use: Age (older = less use), Country, Education (more = less use), Conscientiousness (more = less use), and Sensation Seeking (more = more use). Gender, ethnicity, and the other personality traits are not significant. 
+The model also improves fit meaningfully (deviance drops from 1366.1 to 1003.6; different of around 262), so the predictors add explanatory power. AIC = 1130 for comparison with other models. 
+
+
+The decision tree used only 5 predictors (mainly SS, Country, Age, Ascore, and Cscore), with Sensation Seeking as the most important split. It created 7 terminal nodes and achieved about 72.3% training accuracy with a 27.7% misclassification rate). Overall, nicotine use is mainly driven by Sensation Seeking, with a few additional splits coming from Country, Age, and personality traits. This output aligns with the logistic regression model's output. 
+
+
+The methods Random Forest, Boosting, and logistic regression substantially outperform the single Pruned Tree, with their ROC curves sitting much higher above the random classifier diagonal line. Random Forest, Boosting, and Logistic Regression perform similarly to each other, suggesting that in this application a well-tuned Logistic Regression is equal with more complex methods of prediction.
