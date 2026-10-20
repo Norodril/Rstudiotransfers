@@ -1,0 +1,169 @@
+---
+title: "TravelPatternsAnalysis"
+author: "Lir Doron"
+date: "2026-10-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+1. Travel patterns largely returned to normal in 2021 compared to the highly unusual patterns experienced during the peak of the pandemic in 2020. The file 'Death by Month Table.xlsx' contains information about vehicle-related deaths from January 1992 to December 2021. 
+
+```{r}
+library("readxl")
+
+#read the excel file and remove the 2 unwanted rows 
+motor_death_month = read_excel("Deaths by Month Table.xlsx"
+                               ,skip = 1, n_max = 391)[-c(1, 2), ]
+
+#delete summary information
+delete = c(1:30)*13
+motor_death_month = motor_death_month[-delete,]
+
+
+#reorder the data- split into 30 groups of 12 months 
+#reversing the groups so the months are in the desired choronological order 
+#Combine everything back together 
+groups = split(motor_death_month, rep(1:30, each = 12))
+motor_death_month = do.call(rbind, rev(groups))
+
+```
+
+When the data is posted as many columns (ie. in this data, we have Death, Death rate per 100 million vehicle miles and Vehicle miles in billions). We will choose one column as our time series data. Instead of using Death rate per 100 million vehicle miles column in the lab material, here we will be using deaths column in the following analysis.
+
+a. Choose the Deaths column and convert the data to ts format
+
+```{r}
+deaths <- motor_death_month$Deaths
+deaths_ts <- ts(deaths, start = c(1992, 1), frequency = 12)
+```
+
+b. Plot the data versus each month
+
+```{r}
+#graph where x axis is the time/motnh and y axis = number of deaths
+plot(deaths_ts,
+     xlab = "Month",
+     ylab = "Deaths")
+```
+
+c. Plot the data versus index number from 1, 2, ..., n 
+
+```{r}
+#Giving every observation a number/index
+#Graph of deahts vs observation number
+n <- length(deaths)
+plot(1:n, deaths,
+     type = "l",
+     xlab = "Index",
+     ylab = "Deaths")
+```
+
+d. Please cut the start of the data and the end, eg. your data will start January 2009 and end at Dec 2018 and use the last 3 as years as testing data.
+
+```{r}
+#Training data- January 2009 - December 2018
+train <- window(deaths_ts,
+                start = c(2009, 1),
+                end = c(2018, 12))
+
+#Testing data- January 2019- December 2021
+test <- window(deaths_ts,
+               start = c(2019, 1),
+               end = c(2021, 12))
+```
+
+e. Create quarterly average. Compare roughness/smoothness of the data
+
+```{r}
+#Combining 3 months at a time 
+#Quarter 1: January, February, March
+#Quarter 2: April, May, June
+
+#creating quarterly averages
+quarterly_deaths <- aggregate(deaths_ts,
+                              nfrequency = 4,
+                              FUN = mean)
+
+#Plot quarterly averages
+plot(quarterly_deaths,
+     xlab = "Year",
+     ylab = "Average Deaths",
+     main = "Quarterly Average Vehicle-Related Deaths")
+```
+
+The monthly series is rougher, with larger month-to-month fluctuations, while quarterly average series is smoother since averaging 3 months reduces random variation and extreme values. However, the quarterly series still shows a regular up-and-down pattern, indicating that seasonality remains. Overall, quarterly averaging reduces noise while preserving the main trend and seasonal pattern.
+
+2. Simulate and plot n = 500 values of a Gaussian white-noise process with variance σZ^2 = 1, ie. Zt ~IID(N(0, σZ^2). Using the above Gaussian process Zt, use the filter command to construct a moving average process of the form:
+Xt = (Zt-2 + Zt-1 + Zt + Zt+1 + Zt+2)/5. (every Xt is the average of 5 neighboring Zs)
+Due to randmness of generating observations, if you want to generate the same results every time you run your code, please use the same random seed when doing the simulation. 
+
+```{r}
+#setting seed
+set.seed(444)
+
+#simulating 500 Gaussian white-noise observations
+Z <- rnorm(500, mean = 0, sd = 1)
+
+#creating the moving average process
+X <- stats::filter(Z,
+            filter = rep(1/5, 5),
+            sides = 2)
+
+head(X) #checking it worked
+```
+
+Therefore, by using the same random seed, you will get the same results when you call simulation after the set.seed command with the same integer number.
+
+a. Plot Zt and Xt together with different colors. Do you observe any difference?
+
+```{r}
+#Plotting Zt and Xt together
+plot(Z,
+     type = "l",
+     col = "blue",
+     xlab = "Time",
+     ylab = "Value",
+     main = "Gaussian White Noise and Moving Average")
+
+lines(X,
+      col = "red")
+
+legend("topright",
+       legend = c("Zt", "Xt"),
+                  col = c("blue", "red"),
+                  lty = 1)
+```
+
+Do you observe any difference between Zt and Xt? Yes- Zt is more jagged and has larger random fluctuations, while Xt is far smoother and stays in a narrower range. This is due to the fact that Xt averages 5 neighboring Zt values, which reduces the random variance and fluctuations compared to the plot of the Zts.   
+
+
+b. Plot sample acfs of Zt and Zt and compare the 2 plots. 
+
+```{r}
+#Plotting sample ACFs
+acf(Z,
+    main = "Sample ACF of Zt")
+
+acf(na.omit(X),
+    main = "Sample ACF of X")
+```
+
+
+Comparing the sample ACFs of Zt and Xt: The ACF of Zt is close to zero after lag 0, which is expected for white noise. The ACF of Xt has strong positive correlations at lags 1-4, and then drops close to 0. This occurs since neighboring Xt values share several of the same Zt values and are correlated. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+

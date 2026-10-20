@@ -1,0 +1,57 @@
+---
+title: "TimeSeries"
+author: "Lir Doron"
+date: "2026-10-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Problem 4- Checking answers
+```{r}
+polyroot(c(1, -5))
+polyroot(c(1, -0.75, 0.125))
+#The output- [1] 0.2+0i confirms z = 0.2 ,
+#The outputs for polyroot(c(1, -0.75, 0.125)) are essentially z = 2, z = 4 (negligible difference)
+#Thus, the hand held calculations match the R results perfectly 
+```
+
+Problem 7. Let {Zt} be a Gaussian white noise, that is, a sequence of i.i.d normal rvs each with mean 0 and variance 1. let Yt = Zt^2
+
+a. Using R generate 350 observations of the Gaussian white noise Z. PLot the series and its acf
+```{r, fig.width = 8, fig.height = 4}
+
+set.seed(132) #making results reproducible
+n <- 350 #sample size 
+
+#Gaussian White Noise
+Z <- rnorm(n) #350 independent values from a normal distribution
+par(mfrow = c(1, 2), mar = c(4, 4, 3, 1)) #setting margins and making the plots appear side by side 
+plot.ts(Z, xlab = "t", ylab = "Z", main = "Gaussian white noise Z") #plotting vector as a time series 
+acf(Z, main = "ACF of Z") #computes correlation between the Zs - measures how strongly the pairs (Zt and Zt+h move together)
+```
+ACF Curve: Most of the bars after lag 0 are inside the blue lines, telling us that at lag 1, 2, 3, ect, there isn't a significant correlation- evidence that Y behaves like white noise. 
+- blue dashes lines are the boundaries used to judge whether a correlation is unusually large 
+
+b. Using R, plot 350 observations of the series Y = Zt^2. Plot its acf
+```{r}
+#Y = Z^2
+Y <- Z^2
+#same plots but for Y
+plot.ts(Y, xlab = "t", ylab = "Y", main = "Y = Z^2")
+acf(Y, main = "ACF of Y")
+par(mfrow = c(1, 1))
+```
+Here, although some of the lines are out of the autocorrelation borders (dashes lines), most of the autocorrelations are close to 0, with few lags slightly outside the 95% confidence bounds. 
+
+c. Analyze the graphs from (a) and (b). 
+- Can you see a difference between the plots of graphs of time series Z and Y? From the graphs, would you conclude that both series are stationary (or not)?
+- Is there a noticeable difference in the plots acf functions pz and py? Would you describe Y as non-Gaussian white noise sequence based on your plots? 
+
+Provide full analysis of your conclusions
+
+The time series plots of Z and Y = Z^2 look different since Z takes both positive and negative values, while Y is always non-negative and has occasional large spikes. Both series appear stationary since there is no clear trend and their behavior stays roughly consistent over time. The ACF plots are very similar, with correlations close to 0 and nonzero lags. Therefore, Y appears to be a non-Gaussian (normal distribution must be roughly bell shapes with values on both sides of its mean) white noise sequence: it has little to no serial correlation, but its distribution is not Gaussian since it is non-negative and right-skewed. 
+
+d. Calculate the second order moments of Y and py. Do your calculations support your observations in c? 

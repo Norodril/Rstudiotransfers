@@ -1,0 +1,264 @@
+---
+title: "PSTAT132_HW2"
+author: "Lir Doron"
+date: "2026-10-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(DBI)
+library(RSQLite)
+```
+
+# Database Setup
+```{r}
+#creating a temporary database that lives in memory
+#it disappears when the R session ends, so there is no file to manage
+#"db" is the connection object we use for every query below
+db <- dbConnect(RSQLite::SQLite(), ":memory:")
+```
+
+
+```{r}
+#dbExecute() runs the SQL and doesn't return a table of results
+
+#STUDENT table (StudentID is the primary key)
+dbExecute(db, "
+          CREATE TABLE STUDENT (
+          StudentID TEXT PRIMARY KEY,
+          Name TEXT,
+          Major TEXT,
+          GPA REAL
+          );")
+
+#COURSE table (CourseID is the primary key)
+dbExecute(db, "
+          CREATE TABLE COURSE (
+          CourseID TEXT PRIMARY KEY,
+          Title TEXT,
+          Credits INTEGER
+          );")
+
+#ENROLLMENT table: links students to courses
+#The primary key is the PAIR (StudentID, CourseID) since one student can take many 
+#courses and one course contains many students
+#The Foreign keys say these values must exist in STUDENT and COURSE
+dbExecute(db, "
+          CREATE TABLE ENROLLMENT (
+          StudentID TEXT,
+          CourseID TEXT,
+          Grade TEXT,
+          PRIMARY KEY (StudentID, CourseID),
+          FOREIGN KEY (StudentID) REFERENCES STUDENT(StudentID),
+          FOREIGN KEY (CourseID) REFERENCES COURSE(CourseID)
+          );")
+
+#Sample data from Lecture 4 example tables 
+#GPA and Credits don't appear in Lecture 4, so those values are made up
+#Students
+dbExecute(db, "
+          INSERT INTO STUDENT (StudentID, Name, Major, GPA) VALUES
+          ('1001', 'Alice', 'Statistics', 3.8),
+          ('1002', 'Brian', 'Mathematics', 3.5),
+          ('1003', 'Carla', 'Statistics', 3.9),
+          ('1004', 'Daniel', 'Computer Science', 3.2);")
+
+#Courses
+dbExecute(db, "
+          INSERT INTO COURSE (CourseID, Title, Credits) VALUES
+          ('STAT132', 'Database Systems', 4),
+          ('STAT140', 'Statistical Modeling', 4),
+          ('MATH101', 'Calculus', 4),
+          ('CS105', 'Programming', 4);")
+
+#Enrollments
+dbExecute(db, "
+          INSERT INTO ENROLLMENT (StudentID, CourseID, Grade) VALUES
+          ('1001', 'STAT132', 'A'),
+          ('1001', 'STAT140', 'B'),
+          ('1002', 'MATH101', 'A'),
+          ('1003', 'STAT132', 'A'),
+          ('1004', 'CS105', 'B');")
+
+
+
+```
+Recreating Lecture Tables (Customers and Orders) in the in-memory database
+```{r}
+customers <- data.frame(
+  customer_id = 1:6,
+  name = c("Ava", "Ben", "Chi", "Dee", "Eli", "Faye"),
+  region = c("North", "South", "North", "West", "South", "East")
+)
+
+orders <- data.frame(
+  order_id = 1:12,
+  customer_id = c(1, 2, 1, 3, 4, 2, 5, 6, 1, 3, 5, 2),
+  product_id = c(1, 2, 1, 3, 4, 2, 1, 4, 3, 2, 1, 1),
+  order_date = as.character(as.Date("2023-01-01") +
+                              c(0, 2, 5, 7, 10, 11, 12, 14, 15, 18, 20, 22)),
+  amount = c(120, 55, 80, 40, 200, 30, 90, 160, 35, 75, 60, 95)
+)
+
+#Products
+products <- data.frame(
+  product_id = 1:5,
+  product_name = c("Laptop", "Desk Chair", "Wireless Mouse", "Notebook", "Monitor"),
+  category = c("Electronics", "Furniture", "Electronics", "Stationery", "Electronics"),
+  price = c(1200.00, 150.50, 25.99, 5.00, 300.00)
+)
+
+
+dbWriteTable(db, "customers", customers, overwrite = TRUE)
+dbWriteTable(db, "orders", orders, overwrite = TRUE)
+dbWriteTable(db, "products", products, overwrite = TRUE)
+```
+
+Write relational algebra and SQL queries for Questions 1 through 3. For the SQL, just write the query; it does not need to run. Assume reasonable attribute schemas
+- Will run SQL on the data generated to ensure correctness
+
+1. Find the CourseID of all courses taken by student '1001', but NOT taken by student '1002'. 
+(HINT: For the SQL you might find it useful to use the operator 'EXCEPT'.)
+
+Relational Algebra: 
+$$
+\pi_{CourseID}\big(\sigma_{StudentID = \text{'1001'}}(ENROLLMENT)\big)
+\; - \;
+\pi_{CourseID}\big(\sigma_{StudentID = \text{'1002'}}(ENROLLMENT)\big)
+$$
+
+SQL:
+```{r}
+q1 <- dbGetQuery(db, "
+--every course student 1001 took
+                 SELECT CourseID 
+                 FROM ENROLLMENT 
+                 WHERE StudentID = '1001'
+--set difference (keeps rows from first query that are not returned by the 2nd query)
+                 EXCEPT
+--every course student 1002 took
+                 SELECT CourseID
+                 FROM ENROLLMENT 
+                 WHERE StudentID = '1002'")
+
+print(q1)
+```
+
+2. Find the Name of the student and the Title of the course for all enrollments where the Grade is an 'A' 
+
+Relational Algebra: 
+$$
+\pi_{Name,\, Title}\Big(\sigma_{Grade = \text{'A'}}\big(STUDENT \bowtie ENROLLMENT \bowtie COURSE\big)\Big)
+$$
+
+SQL:
+```{r}
+q2 <- dbGetQuery(db, "
+                 SELECT S.Name, C.Title 
+                 FROM STUDENT S 
+                 JOIN ENROLLMENT E ON S.StudentID = E.StudentID
+                 JOIN COURSE C ON E.CourseID = C.CourseID
+                 WHERE E.Grade = 'A';
+                 ")
+print(q2)
+```
+
+
+3. Write a query to list each student's name together with the title of the course they are enrolled in. Include all enrollments. 
+
+Relational Algebra
+$$
+\pi_{Name,\, Title}\big(STUDENT \bowtie ENROLLMENT \bowtie COURSE\big)
+$$
+
+SQL:
+```{r}
+#FROM ENROLLMENT E is used since it connects students to the courses they take. 
+#The 2 joins join the students and courses together via CourseID and StudentID columns to get the names
+q3 <- dbGetQuery(db, "
+                 SELECT S.Name, C.Title 
+                 FROM ENROLLMENT E 
+                 JOIN STUDENT S ON E.StudentID = S.StudentID
+                 JOIN COURSE C ON E.CourseID = C.CourseID;
+                 ")
+
+print(q3)
+```
+
+Questions 4 and 5
+Referring to the code and relations in Lecture 3, write and run a SQL script to answer the following queries. 
+
+4. Find regions whose total sales exceed 500. Return 'region' and 'total_sales'.
+
+```{r}
+#Joining orders to customers to get each order's region
+#summing the amounts per region
+#Keeping only regions where the total is above 500 (HAVING filters after GROUP BY)
+
+q4 <- dbGetQuery(db, "
+                 SELECT c.region, SUM(o.amount) AS total_sales
+                 FROM orders o 
+                 JOIN customers c ON o.customer_id = c.customer_id
+                 GROUP BY c.region
+                 HAVING SUM(o.amount) > 500; 
+                 ")
+
+print(q4)
+```
+
+- Query returned 0 rows since, after joining 'orders' to 'customers' and summing 'amount' by region, the largest regional total is North at 350 (South 330, West 200, East 160), so no region meets the HAVING SUM(o.amount) > 500 condition. 
+
+5. Produce a result set that lists category-level totals and the grand total in one result using UNION ALL (emulate rollup)
+
+```{r}
+#Total sales for each product category
+#One extra row holding the grand total across all orders
+#UNION ALL stacks both results into one table and keeps every row 
+q5 <- dbGetQuery(db, "
+                 SELECT p.category AS category,
+                 SUM(o.amount) AS total_sales
+                 FROM orders o
+                 JOIN products p ON
+                 o.product_id = p.product_id
+                 GROUP BY p.category
+                 UNION ALL
+                 SELECT 'GRAND TOTAL' AS
+                 category, SUM(amount) AS total_sales
+                 FROM orders;
+                 ")
+
+print(q5)
+```
+
+6. Explain why the Cartesian product is considered the theoretical foundation of a join
+Let relation R have m tuples and relation S have n tuples
+- The Cartesian product R x S contains m x n tuples since every tuple in R is paired with every tuple in S 
+- Most tuples in the Cartesian product may be unwanted combinations since they do not satisfy the relationship we want between the 2 tables
+- A JOIN keeps only the combinations that satisfy a specified join condition 
+Relational Algebra:
+1. Cartesian Product: 
+$$
+R \times S = \{\, (r, s) \mid r \in R \ \text{and} \ s \in S \,\}
+$$
+2. Join: 
+$$
+R \bowtie_{\theta} S = \sigma_{\theta}(R \times S)
+$$
+A JOIN is theoretically defined as a Cartesian product followed by a selection. The Cartesian product generates all possible combinations, and the selection filters out the combinations that do not meet the join condition. 
+
+Demo:
+```{r}
+#Cartesian Product- Every customer paired with every order (6 x 12 = 72 rows)
+dbGetQuery(db, "SELECT COUNT(*) AS 
+           cartesian_rows FROM customers CROSS JOIN orders;
+           ")
+
+#Join- Only pairs where the orders belong to that customer
+dbGetQuery(db, "SELECT COUNT(*) AS join_rows
+           FROM customers c
+           JOIN orders o On c.customer_id = o.customer_id;
+           ")
+```
+
+The Cartesian product produced 72 rows (6 x 12 from both tables), but the join only kept 12 where the order belongs to that customer, demonstrating that most Cartesian product tupes are unwanted. 

@@ -1,0 +1,136 @@
+---
+title: "IncomeAnalysis"
+author: "Lir Doron"
+date: "2026-10-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+1. Reading the Data
+We introduce the Time Series Data Library (TSDL) created by Professor Rob Hyndman. 
+
+```{r}
+#install.packages("devtools")
+#install.packages("forecast")
+#devtools::install_github("FinYang/tsdl")
+
+library(tsdl)
+library(forecast)
+meta_tsdl$description[[1]]
+iowa.ts <- tsdl[[1]]
+```
+
+Data Analysis: 
+a. Plot the time series. What do you notice? Does the variance change over time? Is there a trend and/or seasonal components? 
+- The data is Iowa nonfarm income, where each number is the total income in Iowa that did not come from farming, measures once per quarter. 
+
+Plotting the Time Series: 
+```{r}
+#checking the data
+head(iowa.ts)
+
+#time series plot 
+#R recognizes the time series object and automatically uses X axis as time and y axis as the income values for each quarter
+ts.plot(iowa.ts, main = "Quarterly Iowa nonfarm income", ylab = expression(X[t]))
+```
+From the graph derived above, the series shows a strong increasing trend, with growth accelerating after about 1970. The variance is not constant, since the quarterly changes grow as the level of the series rises. There is no apparent seasonal component that can be observed from this graph. 
+
+b. Apply a Box-Cox transformation to the time series, find the optimal lambda, transform the data, and re-replace the transformed time series vs. original time series
+
+A box cox transformation helps stabilize the variance. It is a way to change the data's scale so that its variance is more stable over time. The Iowa nonfarm income data has an increasing trend, and the changes in income get larger as income increases over time. 
+```{r}
+#Finding the value of lambda that works best for the data
+lambda <- BoxCox.lambda(iowa.ts)
+lambda
+
+#Transforming the original time series
+#iowa.boxcox = a new variable that stores the transformed Iowa income data 
+iowa.boxcox <- BoxCox(iowa.ts, lambda)
+
+#Plotting the original and transformed time series
+par(mfrow = c(2,1)) #tells R to display the 2 plots vertically
+ts.plot(iowa.ts,
+        main = "Original Iowa Nonfarm Income",
+        ylab = "Income",
+        xlab = "Time")
+
+ts.plot(iowa.boxcox,
+        main = paste("Box-Cox Transformed Data, lambda = ",
+                     round(lambda, 3)),
+        ylab = "Transformed Income")
+
+#reset plotting layout
+par(mfrow = c(1, 1))
+```
+Optimal lambda is -0.3620512, and the Box-Cox transformation's values are compressed, the the growth is less dramatic in the bottom graph. However, the transformed series still has a clear upward trend. 
+
+
+c. Calculate the sample variance and examine the sample ACF of the transformed data (set max.lag = 48 or 60). What do you notice? Assess if there is trend in the data. If yes, remove trend components by using the diff() at lag = 1. Plot the differenced time series. Does it look stationary? Re-calculate the sample variance. 
+- Plotting ACF to look for a trend, and if a trend remains, using diff() with lag = 1 to remove it and plotting the differenced data/calculating its variance again.
+
+Calculating Sample Variance:
+```{r}
+var(iowa.boxcox)
+```
+
+Examining the ACF:
+```{r}
+acf(iowa.boxcox, lag.max = 48,
+    main = "ACF of Box-Cox Transformed Data")
+```
+
+This ACF plot of the Box-Cox Transformed Data suggests that the ACF decreases very slowly, which is a common sign that the series still has a trend and is not stationary. Additionally, many bars exceed the blue lines, meaning that autocorrelations are statistically significant. Thus, first differencing is applied to remove the trend 
+
+Difference at lag 1: 
+```{r}
+iowa.diff <- diff(iowa.boxcox, lag = 1)
+
+#plotting the differenced series
+ts.plot(iowa.diff,
+        main = "Differenced Box-Cox Transformed Income",
+        ylab = "Difference",
+        xlab = "Time")
+
+#Calculating the new sample variance
+var(iowa.diff)
+```
+- The output [1] 5.214359e-07 is the sample variance of the differenced Box-Cox transformed data. 
+From this, the differenced series looks much more stationary than the original data, the strong upward trend is gone, with values fluctuating around a roughly constant level. The series appears to fluctuate around a relatively stable average, with the size of the fluctuations looking reasonable stable overall, although there are some larger spikes in the earlier years. This suggests that the first differencing has successfully removed the trend and that the series is approximately stationary. 
+
+
+d. If there is seasonality, determine the seasonal period and remove seasonal components by differencing the time series data from (c) using the diff() function. Re-calculate the sample variance. 
+-Trend that repeats every quarter each year? (lag = 4)
+
+```{r}
+#seasonality for the differenced data- calculating and plotting autocorrelations
+acf(iowa.diff, lag.max = 48,
+    main = "ACF of Differenced Data")
+```
+If a quarterly patter were still present, there would be recurring spikes at the seasonal lags, standing clearly outside the bands. Here, lags 4, 8, and 12 are small/or within the bands. There is no consistent pattern here of significant spikes repeating every four lags, and the isolated spike around lag 8 is not enough on its own to establish seasonality, therefore there is no strong evidence of seasonality in the differenced data. Thus, no additional differencing was performed and the sample vaiance remaines 5.214359 x 10^-7
+
+
+e. For the stationary data you get, examine the sample ACF and sample PACF and pick significant lags for sample ACF and sample PACF. 
+
+ACF: Measures the relationship between the series and its past values at each lag, including indirect relationships
+
+PACF: Measures the relationship at each lag after accounting for the effects of the shorter lags
+
+```{r}
+#ACF of the stationary data
+acf(iowa.diff, lag.max = 48,
+    main = "ACF of Stationary Data")
+
+#PACF of the stationary data
+pacf(iowa.diff, lag.max = 48,
+     main = "PACF of Stationary Data")
+```
+
+After examining the sample ACF and PACF using the approximate 95% confidence bounds, lag 8 appears to be statistically significant, while most other lags lie within the confidence bounds. In the PACF plot, lag 5 has a negative spike close to/slightly beyond the lower confidence bound, while the remaining lags mostly lie within the bounds. These plots suggest that the first differenced series has relatively weak autocorrelation at most lags, with a few potentially significant lags.
+
+
+
+
+
