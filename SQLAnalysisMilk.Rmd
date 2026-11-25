@@ -1,0 +1,99 @@
+---
+title: "MilkProduction_GraphSQL_Analysis"
+author: "Lir Doron"
+date: "2026-11-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+We will continue to analyze adjusted monthly milk production measured in pounds per from January 1962 to December 1975. And we can import the dataset from tsdl package as milk in R, and denote the milk time series as Xt. For comparison, we split the data into training set train and testing set test. The training set is used for model building, and the testing set is used for prediction verification and comparison. 
+
+```{r}
+library(tsdl)
+milk <- subset(tsdl, 12, "Agriculture")[[3]]
+train <- milk[1:150]
+test <- milk[151:156]
+ts.plot(train, ylab = "Monthly milk production")
+```
+
+From the above graph, we can conclude that Xt is non-stationary because of the upward trend and seasonality. To make it more stationary, we need to remove trend and seasonality with the following code:
+```{r}
+dmilk <- diff(train, 12)
+ddmilk <- diff(dmilk, 1)
+```
+
+Let Yt denote the series ddmilk, Then, Yt = (1-B)(1-B^12)Xt. As Lab Assignment 5 and 6, we choose ARIMA(0, 1, 0) x (0, 1, 1)12 as our final model. Now, we will conduct model diagnostic analysis. 
+
+```{r}
+fit.i <- arima(train, order = c(0, 1, 0), seasonal = list(order = c(0, 1, 1), period = 12, method = "ML"))
+```
+
+a. Perform diagnostics on the chosen model fit. Do the residuals appear to be white noise? Are they normally distributed? You should conduct hypothesis testing and plot some graphs to answer these questions. 
+```{r}
+#Model diagnostics
+res <- residuals(fit.i) #differences between the actual observations and the values predicted by the fitted model 
+```
+We want the residuals to resemble white noise, meaning the mean is approximately 0, variance is constant, there is no significant autocorrelation and no predictable pattern over time. 
+
+```{r}
+par(mfrow = c(2, 2))
+
+plot(res, main = "Residuals Over Time",
+     ylab = "Residuals")
+
+acf(res, main = "ACF of Residuals")
+
+hist(res, main = "Histogram of Residuals",
+     xlab = "Residuals")
+
+qqnorm(res)
+qqline(res)
+
+par(mfrow = c(1, 1))
+```
+
+Testing Whether Residuals are White Noise:
+```{r}
+Box.test(res, lag = 24, type = "Ljung-Box",
+         fitdf = 1)
+
+#Testing whether residuals are normally distributed
+shapiro.test(res)
+```
+Interpretation:
+The residual diagnostics show that the ARIMA(0, 1, 0) x (0, 1, 1)12 model captures the dependence structure of the milk production data well. The residuals fluctuate around 0 with no visible trend, seasonality, or changing variance, though there is one unusually large positive residuals near time 110. The residual ACF plot shows that all autocorrelations, except the spike at lag 0 (expected), fall within the 95% confidence bands. This is supported by the Ljung-Boc test (P-value = 0.9512 > 0.05 ), so we fail to reject the null hypothesis and conclude that there is no significant evidence of residual autocorrelation. However, the histogram and QQ plot suggest some deviation from normality, particularly in the upper tail. The Shapiro-Wilk test (p-value = 1.17 x 10^-6 < 0.05) confirms this, as we reject the null hypothesis of normality. Overall, this shows that the residuals behave like white noise, suggesting that the model adequately captures the trend and seasonal patterns in the data. Although the residuals are not normally distributed the model is still reasonable for forecasting, though prediction intervals based on nomality assumptions should be looked into before being interpreted. 
+
+b. Forecast the next 6 observations using predict(), and plot your predictions. And you should also add the true milk production points in 'test'. 
+```{r}
+#Forecasting the next 6 observations
+fc <- predict(fit.i, n.ahead = 6)
+
+#Plot training data
+ts.plot(train, col = "black",
+        xlim = c(1, 156),
+        ylim = range(c(train, test, fc$pred)),
+        main = "Milk Production: Forecast vs Actual",
+        ylab = "Milk Production (pounds)",
+        xlab = "Month index")
+
+#Add actual testing observations
+points(151:156, test, col = "red", pch = 19)
+
+#Adding predicted observations
+points(151: 156, fc$pred, col = "blue", pch = 17)
+
+#Connecting Predicted Observations
+lines(151:156, fc$pred, col = "blue", lty = 2)
+
+#Adding Legend 
+legend("topleft",
+      legend = c("Training Data", "Actual Test Data", "Forecast"),
+      col = c("black", "red", "blue"),
+      pch = c(NA, 19, 17),
+      lty = c(1, NA, 2))
+```
+
+Interpretation: The forecasts follow the downward seasonal pattern of the actual test values and stay close to them for the first few months, with small deviations toward the end of the six months. 

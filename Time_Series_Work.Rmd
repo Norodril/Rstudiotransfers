@@ -1,0 +1,161 @@
+---
+title: "Time_Series_Work"
+author: "Lir Doron"
+date: "2026-10-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+c) Plot an examine the main featuers of the graph, checking in particular whether there is 
+i. A trend, ii. A seasonal component, iii. Any apparent sharp changes in behavior. 
+
+```{r data}
+data(discoveries)
+x <- discoveries
+t <- time(x)
+
+start(x); end(x); frequency(x); length(x)
+summary(x)
+c(mean = mean(x), variance = var(x), sd = sd(x))
+```
+Plotting and Examining the main features- time plot
+
+```{r timeplot}
+plot(x, type = "o", pch = 16, cex = 0.6,
+     main = "Great Inventions and Scientific Discoveries, 1860-1959",
+     xlab = "Year", ylab = "Number of discoveries")
+abline(h = mean(x), lty = 2, col = "red")
+legend("topright", legend = "Overall mean", lty = 2, col = "red", bty = "n")
+```
+
+Trend
+```{r trend-tests}
+# Linear regression on time
+fit_lm <- lm(x ~ t)
+summary(fit_lm)
+
+t <- time(discoveries)
+plot(discoveries, main = "Trend check", ylab = "Number of discoveries")
+lines(lowess(t, discoveries), col = "blue", lwd = 2)
+abline(lm(discoveries ~ t), col = "darkgreen", lwd = 2)
+
+summary(lm(discoveries ~ t))
+```
+-There is a weak, slowly varying/ mild downward linear trend, not a clear one 
+-This is a reason to check stationarity formally
+
+
+Seasonality: 
+The data are annual (frequency = 1), so there is no seasonal component. A periodogram checks for any longer cycle.
+
+```{r seasonal}
+frequency(discoveries)
+spec.pgram(discoveries, taper = 0, log = "no", main = "Periodogram")
+```
+- There is no seasonal component (the data are annual with frequency = 1, so there is no within-year period to repeat)
+
+Sharp Changes:
+```{r changes}
+# mean and variance in four 25-year blocks
+block <- rep(1:4, each = 25)
+tapply(discoveries, block, mean)
+tapply(discoveries, block, var)
+
+boxplot(as.numeric(discoveries) ~ block, names = c("1860-84", "1885-09", "1910-34", "1935-59"),
+        main = "Counts by 25-year block")
+```
+
+
+- There are no abrupt structural breaks, but there are a few notable occurences:
+The series reachest its maximum of 12 in 1885, and counts of 10 and 9 follow around 1887 hich is the most extreme stretch and produces the large residual in the regression
+-There are changes in levels across blocks (block means are 2.68, 4.20, 3.72, and 1.80)
+- There is a change in variance (block variance are 3.23, 8.25, 4.29, and 1.58, so variability moves with the level)
+There is no single sharp break, but there is a gradual shift in mean and variance with a burst in high values in the 1880s.
+0s and quieter lower periods after about 1935. Since the variance rises and falls with the mean, the series is not strictly stationary in variance as it stands. 
+
+
+d. Transformation and stationarity
+
+```{r transform}
+library(tseries)
+data(discoveries)
+x <- discoveries
+
+y <- sqrt(x + 3/8)
+
+par(mfrow = c(2, 1))
+plot(x, main = "Original", ylab = "Count")
+plot(y, main = "Square-root transform", ylab = "sqrt(count + 3/8)")
+par(mfrow = c(1, 1))
+```
+
+Does the transform stabilize the variance across blocks? 
+```{r variance-check}
+block <- rep(1:4, each = 25)
+rbind(original = tapply(x, block, var),
+      sqrt     = tapply(y, block, var))
+```
+
+Stationarity tests on the transformed series
+```{r tests}
+adf.test(y)    # H0: non-stationary (unit root)
+kpss.test(y)   # H0: stationary
+```
+
+Check whether differencing (lag 1) is needed or harmful
+```{r diff}
+d1 <- diff(y, lag = 1)
+plot(d1, main = "Lag-1 difference of sqrt series")
+adf.test(d1)
+c(var_y = var(y), var_d1 = var(d1))
+acf(d1, main = "ACF of differenced series")
+```
+
+I applied a square-root transformation to stabilize the variance because the data are counts. The ADF test (p = 0.027) and KPSS test (p = 0.055) suggest the transformed series is stationary. Differencing increased the variance and produced a lag-1 ACF near −0.5, suggesting over-differencing. Therefore, I will model the transformed series without differencing (d=0).
+
+e. 
+ACF and PACF
+
+```{r acf-pacf}
+y <- sqrt(discoveries + 3/8)
+
+par(mfrow = c(1, 2))
+acf(y, lag.max = 20, main = "Sample ACF of sqrt series")
+pacf(y, lag.max = 20, main = "Sample PACF of sqrt series")
+par(mfrow = c(1, 1))
+```
+
+
+Fitting the candidate models suggested by the plots
+```{r fit}
+m_ar1   <- arima(y, order = c(1, 0, 0))
+m_ar2   <- arima(y, order = c(2, 0, 0))
+m_ma1   <- arima(y, order = c(0, 0, 1))
+m_arma  <- arima(y, order = c(1, 0, 1))
+
+m_ar2
+c(AR1 = AIC(m_ar1), AR2 = AIC(m_ar2), MA1 = AIC(m_ma1), ARMA11 = AIC(m_arma))
+```
+
+Theoretical ACF/PACF using the fitted coefficients
+```{r theoretical}
+lags <- 1:20
+phi1 <- coef(m_ar1)["ar1"]
+phi2 <- coef(m_ar2)[c("ar1", "ar2")]
+
+par(mfrow = c(2, 2))
+plot(lags, ARMAacf(ar = phi1, lag.max = 20)[-1], type = "h",
+     main = "Theoretical ACF: AR(1)", ylab = "ACF"); abline(h = 0)
+plot(lags, ARMAacf(ar = phi1, lag.max = 20, pacf = TRUE), type = "h",
+     main = "Theoretical PACF: AR(1)", ylab = "PACF"); abline(h = 0)
+plot(lags, ARMAacf(ar = phi2, lag.max = 20)[-1], type = "h",
+     main = "Theoretical ACF: AR(2)", ylab = "ACF"); abline(h = 0)
+plot(lags, ARMAacf(ar = phi2, lag.max = 20, pacf = TRUE), type = "h",
+     main = "Theoretical PACF: AR(2)", ylab = "PACF"); abline(h = 0)
+par(mfrow = c(1, 1))
+```
+
+The ACF tails off after lags 1 and 2, while the PACF cuts off after lag 2, suggesting an AR(2) model. However, ARMA(1,1) has a slightly lower AIC (178.67 vs. 178.77), so I will choose ARMA(1,1) as my preliminary model. Since the AIC values are nearly identical, I will compare residual diagnostics to determine whether it fits the data adequately.

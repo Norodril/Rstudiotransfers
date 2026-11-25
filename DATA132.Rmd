@@ -1,0 +1,201 @@
+---
+title: "DATA132"
+author: "Lir Doron"
+date: "2026-10-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(DBI)
+library(RSQLite)
+library(dplyr)
+library(dbplyr)
+library(tibble)
+library(lubridate)
+
+PSTAT132db <- dbConnect(RSQLite::SQLite(), "PSTAT132-db.sqlite")
+
+
+# Helper: convert any columns with 'date' in their name to Date class
+convert_date_cols <- function(df) {
+  if (!is.data.frame(df)) return(df)
+  date_cols <- grep("date", tolower(names(df)), value = TRUE)
+  for (col in date_cols) {
+    if (!inherits(df[[col]], "Date")) {
+      if (is.character(df[[col]])) {
+        parsed <- as.Date(df[[col]])
+        if (all(is.na(parsed))) parsed <- lubridate::ymd(df[[col]])
+        df[[col]] <- parsed
+      } else if (is.numeric(df[[col]])) {
+        df[[col]] <- as.Date(df[[col]], origin = "1970-01-01")
+      } else {
+        df[[col]] <- as.Date(df[[col]])
+      }
+    }
+  }
+  df
+}
+
+# Lecture 7 data (overwrite = TRUE makes it safe to rerun)
+customers <- tibble(customer_id = 1:5, name = c("Ava","Ben","Chi","Dee","Eli"))
+dbWriteTable(PSTAT132db, "customers", customers, overwrite = TRUE)
+
+products <- tibble(product_id = 1:3, product_name = c("Widget","Gadget","Thing"))
+dbWriteTable(PSTAT132db, "products", products, overwrite = TRUE)
+
+orders <- tibble(
+  order_id    = 1:15,
+  customer_id = c(1,1,2,2,2,3,3,4,4,4,4,5,5,1,3),
+  product_id  = c(1,2,1,3,1,2,1,1,2,3,1,2,1,3,2),
+  order_date  = as.character(as.Date("2023-01-01") +
+                  c(0,5,1,10,20,2,30,3,15,25,40,4,8,50,60)),
+  amount      = c(120,80,50,200,35,75,60,40,90,150,30,55,95,85,65))
+dbWriteTable(PSTAT132db, "orders", orders, overwrite = TRUE)
+```
+
+
+every order together with customer's total spending across all of their orders. 
+- One row per order, where each row also shows how much that order's customer has spent in total across all of their orders 
+```{r}
+q1 <- dbGetQuery(PSTAT132db, "
+                 SELECT order_id, customer_id, DATE(order_date) AS order_date, amount,
+                 SUM(amount) OVER (PARTITION BY customer_id) AS customer_total --for each customer_id, SQL adds up their amounts and writes that on the customer_total part
+                 FROM orders
+                 ORDER BY customer_id, order_date") %>% convert_date_cols() #sorting by customer id first and then the order date
+print(q1)
+```
+
+
+A window function is better than GROUP BY in this case since 'GROUP BY' collapses each customer's total into a single rows, which would provide the totals but would not show the individual orders. Window functions calculate the total per customer ('PARITION BY customer_id') while keeping every order row, so each order appears alongside it's customer's total in one query. With 'GROUP BY' we would need a subquery to the oders table in order to recover the individual rows. 
+
+
+
+```{r}
+q2 <- dbGetQuery(PSTAT132db, "
+                 SELECT order_id, DATE(order_date) AS order_date, ROW_NUMBER() OVER (ORDER BY DATE(order_date) ASC) AS order_number
+                 FROM orders
+                 ORDER BY order_number") %>% convert_date_cols()
+print(q2)
+```
+
+For each customer, ranking their orders from largest to smallest amount. Return the order ID, customer ID, amount, and rank.
+```{r}
+q3 <- dbGetQuery(PSTAT132db, "
+                 SELECT order_id, customer_id, amount,
+                 RANK() OVER (PARTITION BY customer_id ORDER BY amount DESC) AS amount_rank
+                 --restarts at 1 for each customer
+                 -- DESC means the largest amount gets rank 1
+                 FROM ORDERS
+                 ORDER BY customer_id, amount_rank")
+print(q3)
+#RANK() was used rather than ROW_NUMBER() since tied amounts should get the same rank
+#ROW_NUMBER() should split ties arbitrarily
+```
+
+code to find the largest order for each customer. If several orders are tied for largest, return all tied orders.
+```{r}
+q4 <- dbGetQuery(PSTAT132db, "
+                 SELECT order_id, customer_id, DATE(order_date) AS order_date, amount
+                 FROM (
+                 SELECT *,  --inner query takes every columns from orders and adds a new column, 'amount_rank' 
+                 RANK() OVER (PARTITION BY customer_id ORDER BY amount DESC) AS amount_rank
+                 FROM orders
+                 ) --outer query treats the inner result like a temporary table and keeps only rows where amount_rank = 1, which is each customer's top order, then picks the columns to display and sorts by customer 
+                 WHERE amount_rank = 1 -- every order tied for the top amount has rank 1, so all of them are kept
+                 ORDER BY customer_id") %>% convert_date_cols()
+print(q4)
+```
+
+Using a dplyr pipeline find each customer's most recent order date. 
+Return 'customer_id', 'order_id', 'order_date', and 'amount'
+
+```{r}
+q5 <- tbl(PSTAT132db, "orders") %>% #connecting to the orders table 
+  group_by(customer_id) %>% #groups orders by customer, so calculations are performed separately for each customer
+  filter(order_date == max(order_date, na.rm = TRUE)) %>% #keeps each customer's latest order(ties kept)
+  ungroup() %>%  #removes customer grouping after filtering 
+  select(customer_id, order_id, order_date, amount) %>%  #keeping only columns requested
+  arrange(customer_id) %>%  #sorts results by customer ID in ascending order (smallest to largest)
+  collect() %>% #executes query and brings results from database into r 
+  convert_date_cols()  #converts date columns into R date format
+print(q5)
+```
+
+For every customer, showing each order and their cumulative spending including that order
+
+```{r}
+q6 <- dbGetQuery(PSTAT132db, "
+                 SELECT order_id, customer_id, DATE(order_date) AS order_date, amount,
+                 SUM(amount) OVER(
+                 PARTITION BY customer_id -- restart running total for each customer
+                 ORDER BY DATE(order_date), order_id --earliest to latest, with order_id breaking date ties; ORDER BY is what makes the sum cumulative by default 
+                 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW -- from the first order up to this one 
+                 ) AS cumulative_spending
+                 FROM orders
+                 ORDER BY customer_id, order_date, order_id
+                 ") %>% convert_date_cols()
+print(q6)
+```
+
+For each order, calculating that order's percentage of the customer's total spending
+```{r}
+#per order, find that order's percentage value of the customer's total spending 
+q7 <- dbGetQuery(PSTAT132db, "
+                 SELECT order_id, 
+                 customer_id, 
+                 DATE(order_date) AS order_date, 
+                 amount, 
+                 SUM(amount) OVER ( --calculating each customer's total spending 
+                  PARTITION BY customer_id
+                 ) AS customer_total, --customer_total has a different total spending per customer 
+                 ROUND( --calculating the percentage of that amount compared to that customer's total spending 
+                 100.0 * amount / 
+                 SUM(amount) OVER (
+                  PARTITION BY customer_id
+                 ), 2
+                 ) AS pct_of_customer_total
+                 FROM orders
+                 ORDER BY customer_id, order_id;
+                 ") %>% convert_date_cols()
+#this adds 'customer_total' and 'pct_of_customer_total' with the total spending and percentage of that order 
+
+print(q7)
+```
+
+A report frequently retrieves the 10 largest orders for a particular customer, returning order_id, order_date, and order_amount
+Two candidate indexes are: 
+- (customer_id, order_date)
+- (customer_id, order_amount)
+
+
+a. Write SQL code to create the index that you think is the most appropriate
+```{r}
+#The table's column (for largest order) uses 'amount', so the index that would be most appropriate must include that 
+dbExecute(PSTAT132db, "DROP INDEX IF EXISTS idx_orders_customer_amount")
+dbExecute(PSTAT132db, "CREATE INDEX idx_orders_customer_amount ON orders(customer_id, amount)")
+```
+
+b. Inspect and comment on the report query
+```{r}
+report_sql <- " 
+SELECT order_id, order_date, amount AS order_amount
+FROM orders
+WHERE customer_id = 4
+ORDER BY amount DESC
+LIMIT 10 
+"
+
+dbGetQuery(PSTAT132db, paste("EXPLAIN QUERY PLAN", report_sql))
+dbGetQuery(PSTAT132db, report_sql)
+```
+Comment on report query: The report filters on one customer (customer_id = 4), sorts that customer's orders by 'amount DESC', and keeps only the top 10. That is an equality filter plus a sort plus LIMIT. The plan shows SQLite using the index created to search directly for customer 4. Before this, with only the single column index, SQLite had to collect all of the customer's orders and sort them with a temporary B-tree, but now that sorting step is gone. 
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,203 @@
+---
+title: "Data_Practice3"
+author: "Lir Doron"
+date: "2026-11-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+1. A university robotics laboratory runs an automated equipment lending center. Design an ER model and relational schema based on these business specifications. 
+
+a) Borrower: Identified by StudentID. Has a StudentName and an institutional Email. 
+-Storing info about students who borrow equipment- STUDENTS
+b) Item Category: Identified by CategoryCode (ie. "DRONE", "SENSOR"). Has a descriptive CategoryName 
+- Keeping track of equipment categories
+c) Equipment Item: Identified by a unique global BarcodeNumber. Each item belongs to exactly one ItemCategory, and an item category must classify at least one item (1:N relationship, total participation on EquipmentItem).
+-Keeping track of individual pieces of equipment 
+d) Loan Event(LENDS): Students borrow equipment items over time. An equipment item may be borrowed many times over its lifespan, and a student may borrow many items (M:N). Each loan event records a CheckoutDate and an optional ReturnDate. 
+-Tracking which students borrowed which equipment item and when - LOAN (Connects students and equipment); LOAN needs two columns for primary key (composite primary key)
+e) An equipment item cannot be checked out simultaneously to two students without being returned
+
+Setting up the temporary SQLite database 
+```{r}
+library(DBI)
+library(RSQLite)
+
+con <- dbConnect(SQLite(), ":memory:") #creating the database connection stored in con
+dbExecute(con, "PRAGMA foreign_keys = ON;") #tells SQL to enforce the foreign key relationships defined when tables are created, making sure that foreign keys always reference existing records in the related tables
+```
+
+A. STUDENT table - Storing info about each borrower
+```{r}
+dbExecute(con, "
+          CREATE TABLE STUDENT (
+          StudentID INTEGER PRIMARY KEY,
+          StudentName TEXT NOT NULL,
+          Email TEXT NOT NULL UNIQUE
+          );
+          ")
+```
+
+B. ITEM_CATEGORY table - different categories of equipment
+```{r}
+dbExecute(con, "
+          CREATE TABLE ITEM_CATEGORY (
+          CategoryCode TEXT PRIMARY KEY, --primary key
+          CategoryName TEXT NOT NULL --cannot be null
+          );
+          ")
+```
+
+C. EQUIPMENT_ITEM table - individual pieces of equipment
+```{r}
+dbExecute(con, "
+          CREATE TABLE EQUIPMENT_ITEM (
+          BarcodeNumber TEXT PRIMARY KEY,
+          CategoryCode TEXT NOT NULL,
+          SerialNumber TEXT NOT NULL UNIQUE,
+          PurchaseCost REAL NOT NULL CHECK (PurchaseCost >= 0),
+          
+          FOREIGN KEY(CategoryCode) --every category code used in this table must exist in ITEM_CATEGORY
+          REFERENCES ITEM_CATEGORY(CategoryCode)
+          ON DELETE RESTRICT --do not allow a category to be delted if any records in the current table(EQUIPMENT_ITEM) are still using that category 
+          );
+          ")
+```
+
+D. LOAN table- stores each borrowing transaction between a student and equipment item
+```{r}
+dbExecute(con, "
+          CREATE TABLE LOAN (
+          BarcodeNumber TEXT NOT NULL,
+          CheckoutDate TEXT NOT NULL,
+          StudentID INTEGER NOT NULL,
+          ReturnDate TEXT,
+          
+          PRIMARY KEY (BarcodeNumber, CheckoutDate), --creating composite primary key
+          CHECK(ReturnDate IS NULL OR ReturnDate >= CheckoutDate), --makes sure return date is either empty or occurs after the checkout date for the item
+          
+          FOREIGN KEY(BarcodeNumber)
+          REFERENCES EQUIPMENT_ITEM(BarcodeNumber),
+          
+          FOREIGN KEY(StudentID)
+          REFERENCES STUDENT(StudentID)
+          );
+          ")
+
+#Preventing simultaneous loans of the same equipmet item 
+dbExecute(con, "
+          CREATE TRIGGER prevent_overlapping_loans
+          BEFORE INSERT ON LOAN --trigger runs before someone inserts a new row into the loan table 
+          FOR EACH ROW --runs for each row being inserted 
+          WHEN EXISTS (
+          SELECT 1
+          FROM LOAN --Check whether there exists a row in the LOAN table that satisfies the following conditions 
+          WHERE BarcodeNumber = NEW.BarcodeNumber --checks whether the existing loan and the new loan involve the same equipment
+          AND NEW.CheckoutDate < COALESCE(ReturnDate, '999-12-31') --check whether the new loan starts before the existing loan ends 
+          AND CheckoutDate < COALESCE(NEW.ReturnDate, '999-12-31') --check whether existing loan start before the new loan ends
+          --both conditions detect overlapping time periods 
+          )
+          BEGIN 
+          SELECT RAISE(ABORT, 'Equipment item is already checked out'); --if an overlap is found, the new loan is rejected
+          END; 
+          ")
+
+#Preventing updates to an existing loan in a way that creates an overlapping checkout 
+dbExecute(con, "
+          CREATE TRIGGER prevent_overlapping_loans_update
+          BEFORE UPDATE ON LOAN
+          FOR EACH ROW --creates trigger when someone modifies a row in the LOAN table 
+          WHEN EXISTS(
+          SELECT 1
+          FROM LOAN --checking whether at least one row exists in the LOAN table that satisfies the conditions specified next
+          WHERE BarcodeNumber = NEW.BarcodeNumber --checking whether another loan involves the same equipment as the updated loan 
+          AND NOT(
+          BarcodeNumber = OLD.BarcodeNumber
+          AND CheckoutDate = OLD.CheckoutDate
+          )  --ignore the original row we're currently updating and only check other existing loans so SQL doesn't detect the updating loan as updating with itself 
+          AND NEW.CheckoutDate < COALESCE(ReturnDate, '9999-12-31') --checks whether the new loan starts before the existing loan ends 
+          AND CheckoutDate < COALESCE(NEW.ReturnDate, '999-12-31')
+          ) --checks whether the existing loan starts before the updated loan ends 
+          BEGIN 
+          SELECT RAISE(ABORT, 'Equipment item is already checked out');
+          END; --if an overlap is found, RAISE(ABORT) stops the update and an error message is displayed. The original loan is left unchanged. 
+          ")
+```
+
+Insert sample records representing
+a. Two students, two categories, and three equipment items
+```{r}
+#adding 2 students into the STUDENT table 
+dbExecute(con, "
+          INSERT INTO STUDENT VALUES
+          (201, 'Amina Sharif', 'asharif@uni.edu'),
+          (202, 'Julian Cruz', 'jcuz@uni.edu');
+          ")
+
+#Inserting 2 equipment categories
+dbExecute(con, "
+          INSERT INTO ITEM_CATEGORY VALUES
+          ('DRONE', 'Autonomous Quadcopters'),
+          ('SENSOR', 'Sensor Units');
+          ")
+
+#Inserting 3 equipment items 
+dbExecute(con, "
+          INSERT INTO EQUIPMENT_ITEM VALUES
+          ('BC-001', 'DRONE', 'DN-DJI-11', 1299.00),
+          ('BC-002', 'DRONE', 'SN-DJI-22', 1299.00),
+          ('BC-003', 'SENSOR', 'SN-VEL-99', 4200.00);
+          ")
+```
+
+
+b. Two historical checkout transactions and one currently active checkout (ReturnDate IS NULL)
+
+```{r}
+#Inserting 3 records into the LOAN table
+dbExecute(con, "
+          INSERT INTO LOAN VALUES
+          ('BC-001', '2026-10-01', 201, '2026-10-05'), --Student 201 borrowed BC-001 and returned it October 5: Historical transaction
+          ('BC-003', '2026-10-12', 201, '2026-10-18'), --Student 201 borrowed BC-003 and returned it October 18: Historical transaction
+          ('BC-002', '2026-11-01', 202, NULL); --Student 202 borrowed BC-001 and hasn't returned it yet: Active transaction
+          ")
+
+#Checking table contents
+dbGetQuery(con, "SELECT * FROM STUDENT;")
+
+dbGetQuery(con, "SELECT * FROM ITEM_CATEGORY;")
+
+dbGetQuery(con, "SELECT * FROM EQUIPMENT_ITEM;")
+
+dbGetQuery(con, "SELECT * FROM LOAN;")
+```
+
+analytical query using appropriate joins to display all active loans, including the student's name, item barcode, category name, and checkout dates.
+
+```{r}
+#displaying all active loans 
+dbGetQuery(con, "
+           SELECT
+           STUDENT.StudentName,
+           LOAN.BarcodeNumber,
+           ITEM_CATEGORY.CategoryName,
+           LOAN.CheckoutDate
+           FROM LOAN --start with the loan table since it contains the info about each borrowing transaction, including whether an item has been returned 
+           JOIN STUDENT 
+           ON LOAN.StudentID = STUDENT.StudentID --to retrieve the student's name 
+           JOIN EQUIPMENT_ITEM
+           ON LOAN.BarcodeNumber = EQUIPMENT_ITEM.BarcodeNumber --to retrieve info about the equipment item
+           JOIN ITEM_CATEGORY
+           ON EQUIPMENT_ITEM.CategoryCode = ITEM_CATEGORY.CategoryCode --to retrieve the category name 
+           WHERE LOAN.ReturnDate IS NULL; --filters results to include only active loans 
+           ")
+```
+
+
+
+
+
+

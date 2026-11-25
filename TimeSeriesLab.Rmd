@@ -1,0 +1,103 @@
+---
+title: "TimeSeries"
+author: "Lir Doron"
+date: "2026-10-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+1. We will analyze monthly milk production measured in pounds per from January 1962 to December 1975 from the package tsdl as Lab 4 (if you want to re-install tsdl, please refer to lab 4). Lets denote the time series 'milk' as Xt. 
+
+```{r}
+library(tsdl)
+milk <- subset(tsdl, 12, "Agriculture")[[3]] #selects the 3rd time series from the tsdl collection with frequency of 12 in the Agriculture category
+plot(milk) #creates a time series plot of the milk production data
+```
+
+a) Explain why the series milk looks not stationary. To make sereis milk stationary, please difference at lag 12 and then at lag 1. 
+
+The time series is not stationary since it has an increasing trend and seasonal pattern that repeats every 12 months. The mean changes over time, violating the stationarity assumption. In order to make the series stationary, first apply seasonal differencing with a lag of 12 to remove the yearly seasonal pattern, then apply first-order differencing with a lag of 1 to remove the remaining trend.
+```{r}
+d12 <- diff(milk, lag = 12)
+ddmilk <- diff(d12, lag = 1)
+plot(ddmilk)
+```
+The resulting series fluctuates around 0 with a more stable mean and variance, suggesting that the differencing has made the series approximately stationary.
+
+b) Let Yt be the series ddmilk, that is, Yt = (1-B)(1-B^12)Xt. Plot the ACF and PACF of Yt with lag.max = 50 and with lag.max = 12. 
+```{r}
+#ACF and PACF for lag.max 50
+acf(ddmilk, lag.max = 50)
+pacf(ddmilk, lag.max = 50)
+
+#ACF and PACF for lag.max = 12
+acf(ddmilk, lag.max = 12)
+pacf(ddmilk, lag.max = 12)
+```
+
+lag.max is how many lags the plot shows. R is showing years on the X axis, even though the data is measured in months. Thus, 0.5 on the x axis = 6 months, 1 = 12 months. 50 months = 0 to around 4.17 years, 12 months = 0 to 1 year. 
+
+ACF, 50 lags: There is a large negative spike at lag 12 (one year), while the later seasonal lags are mostly insignificant. This suggests a seasonal MA term, so Q = 1 
+PACF, 50 lags: The spike at lag 12 is large, and the later seasonal spikes gradually decrease. This supports a seasonal MA model
+ACF and PACF, 12 lags: most spikes at lags 1-11 are within the confidence bounds, suggesting that no non-seasonal AR or MA terms are needed, thus p = 0 and q = 0. 
+
+c) Now, we assume that Yt corresponds to a SARIMA model. Determine possible candidate models SARIMA(p, d, q) x (P, D, Q)s for the series Yt. 
+
+Based on the ACF and PACF plots, the non-seasonal orders are p = 0, d = 1, and q = 0. The seasonal orders are P = 0, D = 1, Q = 1, with seasonal period s = 12 
+Thus, possible candidate models are 
+
+-SARIMA(0, 1, 0) x (0, 1, 1)12 - Simplest candidate with a seasonal MA(1) term
+
+The following alternative candidates can be fitted to check whether adding AR or MA terms improves the model, but aren't equally suggested by the plots. 
+-SARIMA(1, 1, 0) x (0, 1, 1)12 - Adds a non-seasonal AR(1) term
+-SARIMA(0, 1, 1) x (0, 1, 1)12 - Adds a non-seasonal MA(1) term
+-SARIMA(0, 1, 0) x (1, 1, 0)12 - Uses a seasonal AR(1) term instead of a seasonal MA(1) term
+
+d) Choose one stationary and invertible model for this data set, and write down your fitted model. 
+Fitting all models and comparing their AIC and BIC values
+```{r}
+library(astsa)
+
+m1 = sarima(milk, 0, 1, 0, 0, 1, 1, 12)
+m2 <- sarima(milk, 1, 1, 0, 0, 1, 1, 12)
+m3 <- sarima(milk, 0, 1, 1, 0, 1, 1, 12)
+m4 <- sarima(milk, 0, 1, 0, 1, 1, 0, 12)
+```
+
+Output shows that SARMIA(0, 1,0)(0, 1, 1)12 is the best according to AIC and BIC (lower AIC and BIC values)
+
+```{r}
+library(astsa)
+
+#fitting the selected SARIMA model
+fit <- sarima(milk, p = 0, d = 1, q = 0, P = 0, D = 1, Q = 1, S = 12)
+
+#extracting the R results
+#Estimated seasonal MA coefficients and its standard error
+fit$fit$coef
+fit$t.table
+
+#Estimated noise variance
+fit$sigma2
+
+#AIC, AICc, and BIC
+fit$ICs
+```
+
+I selected and fitted the SARIMA(0, 1, 0) x (0, 1, 1)12 model since it is the simplest model and had to lowest AIC and BIC among the other candidate models. 
+- Seasonal MA coefficient = -0.6749979
+- Standard error: 0.0752
+- Estimated White-noise variance: 34.46585
+- AIC: 6.456845
+- BIC: 6.498283
+
+The fitted model is (1-B)(1-B^12)Xt = (1+0.675B^12)Zt
+Where B is the backshift operator and Zt is the white noise with variance ~= 34.366
+- The model has no AR terms, so the AR stationarity condition is satisfied for the differenced series. The original series is nonstatioanry, which is why regular differencing (d = 1) and seasonal differencing (D = 1) were applied
+- The seasonal MA coefficient has absolute value 0.675 < 1. Its seasonal MA polynomial roots lie outside the unit circle, so the model is invertible. 
+Therefore, the fitted SARIMA model has a stationary differenced series and an invertible seasonal MA component
+
+

@@ -1,0 +1,426 @@
+---
+title: "Data4"
+author: "Lir Doron"
+date: "2026-11-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Connecting and creating database
+```{r}
+library(DBI)
+library(RSQLite)
+
+con <- dbConnect(SQLite(), ":memory:")
+
+dbExecute(con, "PRAGMA foreign_keys = ON") #enforcing foreign key relationships
+
+#Creating a fact table 'fact_sales'
+```
+
+Creating and loading sales table
+```{r}
+dbExecute(con, "
+          CREATE TABLE fact_sales (
+          sale_id INTEGER PRIMARY KEY,
+          sale_date TEXT NOT NULL,
+          customer_id INTEGER NOT NULL,
+          region_id INTEGER NOT NULL,
+          product_id INTEGER NOT NULL,
+          quantity INTEGER NOT NULL CHECK (quantity > 0),
+          amount_cents INTEGER NOT NULL CHECK (amount_cents >= 0)
+          )
+          ")
+```
+
+Generating Sample Data
+```{r}
+set.seed(132)
+
+n <- 30000L
+
+#creates a sequence of every date from January 1, 2024 through December 31, 2025
+calendar <- seq.Date(
+  as.Date("2024-01-01"),
+  as.Date("2025-12-31"),
+  by = "day"
+)
+
+#generating random quantities between 1 to 5 
+quantity <- sample.int(5L, n, replace = TRUE)
+
+#Generating random prices between 500 and 10,000 cents
+unit_price_cents <- sample(
+  500L:10000L, n, replace = TRUE
+)
+
+#adds all columns into one table 
+sales <- data.frame(
+  sale_id = seq_len(n),
+  sale_date = format(
+    sample(calendar, n, replace = TRUE),
+    "%Y-%m-%d"
+  ),
+  customer_id = sample.int(2000L, n, replace = TRUE),
+  region_id = sample.int(6L, n, replace = TRUE),
+  product_id = sample.int(500L, n, replace = TRUE),
+  quantity = quantity,
+  amount_cents = as.integer(quantity * unit_price_cents)
+)
+
+#sorting the sale from earliest to latest and smallest to largest when multiple sales have the same date 
+sales <- sales[order(sales$sale_date, sales$sale_id), ]
+```
+
+Inserting Data into SQLite
+```{r}
+dbWithTransaction(con, {
+  dbAppendTable(con, "fact_sales", sales)
+})
+
+#Checking results
+dbGetQuery(con, "
+           SELECT 
+           COUNT(*) AS total_sales,
+           MIN(sale_date) AS earliest_date,
+           MAX(sale_date) AS latest_date,
+           SUM(amount_cents) AS total_revenue
+           FROM fact_sales
+           ")
+```
+
+Querying Monthly Revenue- We want to calculate total revenue for each region during June 2025
+```{r}
+q_month <- "
+SELECT
+region_id,
+SUM(amount_cents) as revenue_cents
+FROM fact_sales
+WHERE sale_date >= '2025-05-01'
+AND sale_date < '2025-07-01'
+GROUP BY region_id
+ORDER BY region_id 
+"
+
+dbGetQuery(con, q_month)
+
+```
+
+Querying a particular customer- finding the 20 most recent sales made by customer 77
+```{r}
+q_customer <- "
+SELECT
+sale_date,
+sale_id,
+amount_cents
+FROM fact_sales
+WHERE customer_id = 77
+ORDER BY sale_date DESC, sale_id DESC
+LIMIT 20 
+"
+
+dbGetQuery(con, q_customer)
+```
+
+Measuring Query Execution Time
+```{r}
+time_query <- function(sql, repetitions = 5L) {
+
+  elapsed <- vapply(seq_len(repetitions), function(i) {
+
+    system.time(
+      dbGetQuery(con, sql)
+    )[["elapsed"]]
+
+  }, numeric(1))
+
+  data.frame(
+    run = seq_len(repetitions),
+    elapsed_seconds = elapsed
+  )
+}
+
+#running the query and recording how long each execution takes
+month_times <- time_query(q_month)
+
+customer_times <- time_query(q_customer)
+
+month_times
+customer_times
+
+median(month_times$elapsed_seconds)
+
+median(customer_times$elapsed_seconds)
+```
+
+Paritioning a table by month 
+Why do this? If we only need June 2025, we can access the June 2025 partition instead of searching through every month's data
+
+Generating Monthly Boundaries
+```{r}
+month_starts <- seq.Date(
+  as.Date("2024-01-01"),
+  as.Date("2026-01-01"),
+  by = "month"
+)
+
+partition_map <- data.frame(
+
+  table_name = paste0(
+    "sales_",
+    format(month_starts[-length(month_starts)], "%Y_%m")
+  ),
+
+  lower = format(
+    month_starts[-length(month_starts)],
+    "%Y-%m-%d"
+  ),
+
+  upper = format(
+    month_starts[-1L],
+    "%Y-%m-%d"
+  )
+
+)
+
+head(partition_map)
+
+#Creating and populating the partitions
+for (i in seq_len(nrow(partition_map))) {
+
+  table_name <- partition_map$table_name[i]
+
+  lower <- partition_map$lower[i]
+
+  upper <- partition_map$upper[i]
+
+  quoted_table <- dbQuoteIdentifier(con, table_name)
+
+  quoted_lower <- dbQuoteString(con, lower)
+
+  quoted_upper <- dbQuoteString(con, upper)
+
+  create_sql <- sprintf("
+    CREATE TABLE %s (
+      sale_id INTEGER PRIMARY KEY,
+      sale_date TEXT NOT NULL
+        CHECK (sale_date >= %s AND sale_date < %s),
+      customer_id INTEGER NOT NULL,
+      region_id INTEGER NOT NULL,
+      product_id INTEGER NOT NULL,
+      quantity INTEGER NOT NULL CHECK (quantity > 0),
+      amount_cents INTEGER NOT NULL CHECK (amount_cents >= 0)
+    )
+  ", quoted_table, quoted_lower, quoted_upper)
+
+  dbExecute(con, create_sql)
+
+  insert_sql <- sprintf("
+    INSERT INTO %s
+    SELECT *
+    FROM fact_sales
+    WHERE sale_date >= ?
+      AND sale_date < ?
+  ", quoted_table)
+
+  dbExecute(
+    con,
+    insert_sql,
+    params = list(lower, upper)
+  )
+
+}
+```
+
+We use a for loop to automatically create all 24 monthly tables- putting the CREATE TABLE query inside the for loop and inserting data from con
+This is called parameterized SQL and it helps prevent SQL injection and handles values safely. 
+
+Checking the Partitions: 
+```{r}
+dbGetQuery(con, "
+           SELECT COUNT(*) AS june_sales
+           FROM sales_2025_06
+           ")
+```
+
+Checking whether all the monthly partition tables contain the same total number of sales as the original 'fact_sales' table
+```{r}
+partition_counts <- vapply(
+  partition_map$table_name,
+  function(tbl){
+    sql <- sprintf(
+      "SELECT COUNT(*) AS n FROM %s",
+      dbQuoteIdentifier(con, tbl)
+    )
+    dbGetQuery(con, sql)$n[[1]]
+  },
+  numeric(1)
+)
+
+sum(partition_counts)
+
+dbGetQuery(con, "
+           SELECT COUNT(*) AS original_sales
+           FROM fact_sales
+           ")
+
+
+```
+
+Routing Queries to the correct partitions
+Partitioning creates separate tables, but we use a routine function that determines wich monthly partitions overlap with the requested date range
+```{r}
+routed_month_query <- function(start_date, end_date) {
+  start_date <- as.Date(start_date)
+  end_date <- as.Date(end_date)
+  if(
+    length(start_date) != 1L ||
+    length(end_date) !=  1L ||
+    is.na(start_date) ||
+    is.na(end_date)
+  ) {
+    stop("Invalid date")
+  }
+  if(start_date >= end_date) {
+    stop("Start date must be before end date")
+  }
+  start_text <- format(start_date, "%Y-%m-%d")
+  end_text <- format(end_date, "%Y-%m-%d")
+  if(
+    start_text < min(partition_map$lower) ||
+    end_text > max(partition_map$upper)
+  ) {
+    stop("Requested interval is outside partition coverage")
+  }
+  
+  selected <- partition_map[
+    partition_map$lower < end_text & #identifies partitions that overlap with the requested date range 
+      partition_map$upper > start_text,
+  ]
+  
+  pieces <- vapply(
+    selected$table_name,
+    function(tbl){
+      sprintf("
+              SELECT region_id, amount_cents
+              FROM %s
+              WHERE sale_date >= %s
+              AND sale_date < %s
+              ",
+              dbQuoteIdentifier(con, tbl),
+              dbQuoteString(con, start_text),
+              dbQuoteString(con, end_text)
+              )
+    },
+    character(1)
+  )
+  combined <- paste(
+    pieces,
+    collapse = "\nUNION ALL\n"
+  )
+  
+  final_query <- paste0("
+                        SELECT
+                        region_id,
+                        SUM(amount_cents) AS revenue_cents 
+                        FROM (
+                        ", combined, "
+                        ) AS combined_sales
+                        GROUP BY region_id
+                        ORDER BY region_id 
+                        ")
+}
+```
+
+
+Indexes and Query Plans 
+```{r}
+dbExecute(con, "
+          CREATE INDEX idx_customer
+          ON sales(customer_id)
+          ")
+
+#Inspecting the Query Plan
+dbGetQuery(con, "
+           EXPLAIN QUERY PLAN 
+           SELECT * 
+           FROM sales
+           WHERE customer_id = 10
+           ")
+
+#Creating a composite index (indexes more than one column)
+dbExecute(con, "
+          CREATE INDEX idx_customer_date
+          ON sales(customer_id, sale_date)
+          ")
+
+dbExecute(con, "
+          ANALYZE ") #helping SQLite's query planner decide whether using the composite index is worthwhile 
+
+```
+
+Views and Stored Summaries
+```{r}
+#Creating a view 
+dbExecute(con, "
+          CREATE VIEW customer_summary AS 
+          SELECT 
+          customer_id, 
+          SUM(amount) AS revenue,
+          COUNT(*) AS sales_count
+          FROM sales
+          GROUP BY customer_id
+          ")
+
+#Accessing view
+dbGetQuery(con, "
+           SELECT * 
+           FROM customer_summary
+           ")
+
+#Creating a stored Summary table - stores calculated results
+dbExecute(con, "
+          CREATE TABLE stored_summary (
+          customer_id INTEGER PRIMARY KEY,
+          revenue INTEGER,
+          sales_count INTEGER
+          )
+          ")
+
+#populating table 
+dbExecute(con, "
+          INSERT INTO stored_summary
+          SELECT
+          customer_id,
+          SUM(amount),
+          COUNT(*)
+          FROM sales
+          GROUP BY customer_id
+          ")
+
+```
+
+Suppose new sales are inserted into the original table. The stored summary will not automatically update; we must refresh it 
+```{r}
+dbWithTransaction(con, { #creating / executing a transaction
+  dbExecute(con, "
+            DELETE FROM stored_summary
+            ")
+  dbExecute(con, " --recalculating using the original table + inserting updated results 
+            INSERT INTO stored_summary
+            SELECT 
+            customer_id,
+            SUM(amount),
+            ACOUNT(*)
+            FROM sales
+            GROUP BY customer_id
+            ")
+})
+
+dbDisconnect(con)
+```
+
+

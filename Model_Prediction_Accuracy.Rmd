@@ -1,0 +1,100 @@
+---
+title: "Model_Prediction_Accuracy"
+author: "Lir Doron"
+date: "2026-10-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Analyzing adjusted monthly milk production measured in pounds per from January 1962 to December 1975. And we can import the dataset from tsdl package as milk in R, and denote the milk time series as Xt. For comparison, we split the dataset into training set train and testing set test. The training set is used for model building, and the testing set is used for prediction verification and comparison. 
+
+```{r}
+library(tsdl)
+milk <- subset(tsdl, 12, "Agriculture")[[3]]
+
+#looking at the dataset
+start(milk)
+end(milk)
+frequency(milk)
+length(milk)
+```
+
+Splitting the dataset into training set train and testing set test. The testing set is the last 6 months of the data and training set is the rest of the first 150 months of the data. 
+```{r}
+train <- window(milk, end = c(1974, 6)) #extract everything up to June 1974
+test <- window(milk, start = c(1974, 7)) #extract everything starting July 1974
+#this is 6 months since the data goes from July 1974 - December 1974
+```
+
+Fitting the training data to the chosen model 
+
+The selected model was SARIMA(0, 1, 0) x (0, 1, 1)12 
+```{r}
+#Model is fitted using only the training data
+library(astsa)
+fit <- sarima(
+  train,
+  p = 0, d = 1, q = 0,
+  P = 0, D = 1, Q = 1, 
+  S = 12
+)
+```
+
+Model Results: 
+```{r}
+#Estimated Coefficients
+fit$fit$coef
+
+#Standard errors and test statistics
+fit$t.table
+
+#Estimated white noise variance
+fit$sigma2
+
+#AIC, AICc, and BIC
+fit$ICs
+```
+
+The estimated seasonal MA coefficient is -0.6989, with a standard error of 0.0804 and p value approximately equal to 0. The small p-value indicates that the seasonal MA coefficient is statistically significant 
+Zt/white noise has estimated variance 34.78559
+
+The only estimated coefficient in the selected model is the seasonal MA coefficient, which has an estimate of roughly -0.6989. In this case, the seasonal MA coefficients has p value = ~ 0, therefore, it is statistically significant and must be kept rather than being set to 0. Thus, we do not need to set any coefficients to zero, and we must therefore keep the selected model. 
+
+
+
+```{r}
+#Checking stationarity (AR roots)
+ar_roots <- numeric(0) #empty vector since there are no AR roots to calculate 
+stationary <- length(ar_roots) == 0 || all(Mod(ar_roots) > 1) #no AR roots OR if there are AR roots, are there absolute values > 1? 
+
+
+#Verifying Invertibility Condition
+theta <- fit$fit$coef["sma1"] #extracts the estimated seasonal MA coefficient from the fitted model 
+
+invertible <- abs(theta) < 1 #Checking if the absolute value of the coefficient is less than 1 is sufficient to ensure all 12 roots are outside the unit circle
+
+
+#Display results
+cat("Stationarity:", stationary, "\n")
+cat("Invertibility:", invertible, "\n")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

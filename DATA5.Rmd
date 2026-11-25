@@ -1,0 +1,83 @@
+---
+title: "DATA5"
+author: "Lir Doron"
+date: "2026-10-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(dbplyr)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+PSTAT132db <- dbConnect(
+  RSQLite::SQLite(),
+  "PSTAT132-db.sqlite"
+)
+```
+
+Getting the first 10 customers- retrieving customer_id, name, and region for the first 10 customers
+```{r}
+first10 <- dbGetQuery(PSTAT132db, "
+SELECT customer_id, name, region
+FROM customers
+LIMIT 10;
+")
+first10
+```
+
+customer_id, name, and region of customers who spent more than 150$ (total_spend > 150)
+Using dbGetQuery() and using dbplyr() pipes
+
+Using dbGetQuery()
+```{r}
+high_spenders <- dbGetQuery(PSTAT132db, "
+                            SELECT customer_id, name, region
+                            FROM customers
+                            WHERE total_spend > 150;
+                            ")
+high_spenders
+```
+
+Using dplyr pipes:
+```{r}
+high_spenders_pipe <- tbl(PSTAT132db, "customers") %>% 
+  filter(total_spend > 150) %>% 
+  select(customer_id, name, region) %>% 
+  #at this point, dbplyr generally builds a query that the database can execute, but you have only described what data you want, and haven't collected the results into a regular R data frame 
+  #collect tells the database to run the query and send the matching results into R 
+  collect() #this executes the query and brings the resulting rows into R 
+
+high_spenders_pipe
+```
+
+Performing a case-insensitive search and saving the result as 'widget_products' for products containing 'widget' 
+Using SQL 
+```{r}
+widget_products <- dbGetQuery(PSTAT132db, "
+                              SELECT *
+                              FROM products
+                              WHERE product_name LIKE '%widget%' COLLATE NOCASE;
+                              ")
+
+widget_products
+```
+
+Writing the dbplyr equivalent and using show_query
+```{r}
+widget_products_pipe <- tbl(PSTAT132db, "products") %>% 
+  filter(sql("product_name LIKE '%widget%' COLLATE NOCASE"))
+
+show_query(widget_products_pipe)
+
+#collect() takes the query results from the database and brings them into r as a regular data frame or tibble 
+widget_products <- collect(widget_products_pipe)
+#collect(table_or_query), but most commonly, you leave it at the end of a pipe
+```
+
+
+
+
+
