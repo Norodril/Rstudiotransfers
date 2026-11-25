@@ -1,0 +1,331 @@
+---
+title: "AcidAndBase"
+author: "Lir Doron"
+date: "2026-11-25"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Creating a table with constraints
+```{r}
+dbExecute(con, "
+          CREATE TABLE accounts (
+          account_id INTEGER PRIMARY KEY,
+          account_name TEXT NOT NULL, 
+          balance_cents INTEGER NOT NULL
+          CHECK (
+          typeof(balance_cents) = 'integer'
+          AND balance_cents >= 0
+          )
+          )
+          ")
+
+#Inserting initial date
+dbExecute(con, "
+  INSERT INTO accounts
+  VALUES
+    (1, 'Alice', 100000),
+    (2, 'Bob', 50000)
+")
+```
+
+Atomicity means a transaction either completes entirely or does not happen at all
+Ie. Alice transfers $100 to Bob. We must subtract $100 from alice and add $100 to Bob.
+
+```{r}
+tryCatch({
+  dbWithTransaction(con, {
+    #Subtract $100 from Alice
+    dbExecute(con, "
+      UPDATE accounts
+      SET balance_cents = balance_cents - 10000
+      WHERE account_id = 1
+    ")
+    
+    #Simulate a failure
+    stop("Simulated crash!")
+    
+    #This never executes
+    dbExecute(con, "
+              UPDATE accounts
+              SET balance_cents = balance_cents + 10000
+              WHERE account_id = 2 
+              ")
+  })
+}, error = function(e) {
+  message(conditionMessage(e))
+})
+
+#Checking the balances 
+dbGetQuery(con, "SELECT * FROM accounts")
+```
+
+Consistency means every transaction must preserve the database's rules 
+Ie. trying to subtract $2,000 from Alice when she only has $1000
+
+```{r}
+tryCatch(
+  dbWithTransaction(con, {
+    dbExecute(con, "
+              UPDATE accounts
+              SET balance_cents = balance_cents - 2000000
+              WHERE account_id = 1
+              ")
+  })
+  }, error = function(e) {
+    message(conditionMessage(e))
+  })
+```
+
+Isolation- Multiple Database Connections
+Transactions should not interfere with each other or expose uncommitted changes 
+```{r}
+reader <- dbConnect(RSQLite::SQlite(), acid_file) #creating a separate reader connection
+
+dbExecute(reader, "PRAGMA busy_timeout = 5000") #wait up to 5 seconds if the database is locked before giving up and producing an error 
+
+
+#Helper function to read the accounts)
+read_ccounts <- function(connection) {
+  dbGetQuery(connection, " 
+  SELECT * FROM accounts
+  ORDER BY account_id
+             ")
+}
+
+#Beginning a transaction
+dbWithTransaction(con, {
+  #Debit Alice 
+  dbExecute(con, "
+            UPDATE accounts 
+            SET balance_cents = balance_cents - 10000
+            WHERE account_id = 1 
+            ")
+  
+  #Writer sees its own uncommitted change
+  read_accounts(con)
+  
+  #Reader sees only committed data
+  read_accounts(reader)
+  
+  #Credit Bob
+  dbExecute(con, "
+            UPDATE accounts
+            SET balance_cents = balance_cents + 10000
+            WHERE account_id = 2 
+            ")
+  
+#After the transaction commits, the reader can see the updated balance- this prevents dirty reads
+})
+```
+
+Durability- Saving Committed Changes - committed changes survive disconnections or restarts
+
+```{r}
+saved <- read_accounts(con) #saving the current committed state
+
+dbDisconnect(reader)
+dbDisconnect(con) #Disconnecting
+
+#Reconnecting the the same database file 
+con2 <- dbConnect(RSQLite::SQLite(), acid_file)
+
+#Reading the saved data
+reopened <- read_accounts(con2)
+
+#Verifying the data survived
+stopifnot(identical(saved, reopened))
+
+dbDisconnect(con2) 
+```
+
+Once a transaction commites, the change should remain saved even after the dabase connection closes
+
+
+BASE Mechanics 
+BASE allows temporary inconsistencies to improve availability and performance 
+
+Creating the BASE database
+```{r}
+base_con <- dbConnect(RSQLite::SQLite(), ":memory:")
+
+#creating the original sales table 
+dbExecute(base_con, "
+  CREATE TABLE base_sales (
+    sale_id INTEGER PRIMARY KEY,
+    sale_date TEXT NOT NULL,
+    region_id INTEGER NOT NULL,
+    amount_cents INTEGER NOT NULL
+      CHECK (amount_cents >= 0)
+  )
+")
+
+#Summary table creation to store pre-calculated results from the original sales table so we don't have to repeatedly calculate them every time we want to analyze sales
+#stores the total revenue and number of sales for each date and region
+dbExecute(base_con, "
+  CREATE TABLE base_daily_summary (
+    sale_date TEXT NOT NULL,
+    region_id INTEGER NOT NULL,
+    revenue_cents INTEGER NOT NULL,
+    sale_count INTEGER NOT NULL,
+    PRIMARY KEY (sale_date, region_id)
+  )
+")
+
+#base_sales immediately contains new sales inserted into base_sales, while base_daily_summary may still contain the old revenue total since the summary table needs to be refreshed separately to include the new sale 
+
+#Table to track when the summary was last refreshed
+dbExecute(base_con, "
+  CREATE TABLE base_refresh_state (
+    summary_name TEXT PRIMARY KEY, --name of the summary being refreshed
+    refresh_recorded_utc TEXT NOT NULL --date and time when that summary was last refreshed
+  )
+")
+```
+
+
+Background Synchronization- function that updates the summary table using the original sales data
+
+```{r}
+refresh_base_summary <- function(con) {
+
+  dbWithTransaction(con, {
+
+    # Delete old summary data
+    dbExecute(con, "DELETE FROM base_daily_summary")
+
+    # Recalculate totals from original sales
+    dbExecute(con, "
+      INSERT INTO base_daily_summary
+      SELECT
+        sale_date,
+        region_id,
+        SUM(amount_cents),
+        COUNT(*)
+      FROM base_sales
+      GROUP BY sale_date, region_id
+    ")
+
+    # Record when the summary was refreshed
+    dbExecute(con, "
+      INSERT OR REPLACE INTO base_refresh_state --inserts a new row into base_refresh_state, but if a row with the same summary_name (primary key) already exists, it replaces that row instead of producing a duplicate-key error 
+      VALUES (
+        'base_daily_summary',
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now') --generates the current date and time in UTC
+      )
+    ")
+  })
+
+}
+```
+
+Reading the Dashboard
+Instead of repeatedly calculating totals from the detailed sales table, the dashboard reads the summary table 
+```{r}
+#retrieves the daily sales summary and shows when that summary was last refreshed 
+read_dashboard <- function(con) {
+  dbGetQuery(con, "
+             s.sales_date,
+             s.region_id,
+             s.revenue_cents,
+             s.sale_count,
+             m.refresh_recorded_utc
+             FROM base_daily_summary AS s 
+             CROSS JOIN base_refresh_state as m --combines each summary row with the refresh metadata row 
+             WHERE m.summary_name = 'base_daily_summary'")
+}
+```
+
+Eventual Consistency- Stale Data
+Eventual consistency means different parts of a system may temporarily have different data, but they eventually become consistent after synchronization
+
+```{r}
+dbExecute(base_con, "
+          INSERT INTO base_sales (sales_date, region_id, amount_cents)
+          VALUES 
+              ('2025-06-15', 1, 10000),
+              ('2025-06-15', 1, 20000)
+          ")
+
+#Synchronize the summary
+refresh_base_summary(base_con)
+
+read_dashboard(base_con)
+```
+if we insert another $75 sale, and don't refresh the summary yet, the results will differ and the dashboard will show stale data since the new sale has not been synchronized. However, the dashbaord is still available and can respond immediately; the system continues providing responses even when its data is temporarily outdated
+
+Comparing Original and Summary Totals
+```{r}
+#Function to measure difference between the two tables
+detail_total <- dbGetQuery(con, "
+                             SELECT COALESCE(SUM(amount_cents), 0) A total
+                             FROM base_sales
+                             ")$total[[1]]
+
+summary_total <- dbGetQuery(con, "
+                            SELECT COALESCE(SUM(revenue_cents), 0) AS total
+                            FROM base_daily_summary
+                            ")$total[[1]]
+
+data.frame(
+  stage = stage_label,
+  detail_cents = detail_total,
+  summary_cents = summary_total,
+  lag_cents = detail_total - summary_total
+)
+```
+
+Parameterized SQL Queries
+Instead of inserting R variables directly into SQL strings
+- ? placeholders
+```{r}
+amount <- 10000
+account <- 1
+dbExecute(con, "
+          UPDATE accounts
+          SET balance_cents = balance_cents - ? 
+          WHERE account_id = ? 
+          "), params = list(amount, account)  #define the values in a list right after the query and it gets placed instead of ? in the order of the list
+```
+
+Input Validation
+Before performing a transaction, it is good to check that the inputs are valid
+```{r}
+if(amount <=0 || amount != floor(amount)) { #checking if it is zero or negative or contains decimals 
+  stop("Amount must be a positive integer.")
+}
+
+if(from_id == to_id) {
+  stop("Accounts must be different.")
+}
+```
+
+
+Maintaining Invariants- conditions that must always remain true
+Ie. For a bank transfer, the total amount of money must not change
+```{r}
+total_before <- dbGetQuery(con, "
+                           SELECT SUM(balance_cents) AS total
+                           FROM accounts
+                           ")$total[[1]] #exctracts the column named total from the data frame and results in a vector named total_before 
+
+#then perform debit and credit
+
+total_after <- dbGetQuery(con, "
+                          SELECT SUM(balance_cents) AS total
+                          FROM accounts
+                          ")$total[[1]]
+
+if (total_after != total_before) {
+  stop("Total money changed!")
+}
+```
+
+Checks that the money was transferred rather than accidentally created or lost
+
+
+
+
