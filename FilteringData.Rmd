@@ -1,0 +1,147 @@
+---
+title: "PSTAT132_Worksheet1"
+author: "Lir Doron"
+date: "2026-11-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(DBI)
+library(RSQLite)
+library(dplyr)
+library(dbplyr)
+library(tibble)
+library(ggplot2)
+
+#Creating and connecting to the database
+con <- dbConnect(SQLite(), "stat132.db")
+
+#Customers tibble
+customers <- tibble(
+  customer_id = 1:12, 
+  name = c(
+    "Alice", "Bob", "Charlie", "David",
+    "Emma", "Frank", "Grace", "Henry",
+    "Isabella", "Jack", "Katie", "Liam"
+  ),
+  region = c(
+    "West", "East", "North", "South",
+    "West", "East", "North", "South",
+    "West", "East", "North", "South"
+  ),
+  total_spend = c(
+    250, 120, 175, 90,
+    300, 145, 200, 80, 
+    160, 220, 110, 190
+  )
+)
+
+#Products tibble
+products <- tibble(
+  product_id = 1:8,
+  name = c(
+    "Widget Pro", 
+    "Small Widget", 
+    "Laptop",
+    "Desk",
+    "Super Widget",
+    "Keyboard", 
+    "Office Chair",
+    "Mini Widget"
+  ),
+  price = c(50, 25, 800, 150, 75, 40, 200, 15)
+)
+
+#Orders tibble
+orders <- tibble(
+  order_id = 1:10,
+  customer_id = c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
+  product_id = c(1, 2, 3, 4, 5, 6, 7, 8, 1, 3),
+  quantity = c(2, 1, 1, 2, 3, 1, 1, 4, 2, 1)
+)
+
+#Adding the tables to the database
+
+dbWriteTable(con, "customers", customers, overwrite = TRUE)
+dbWriteTable(con, "products", products, overwrite = TRUE)
+dbWriteTable(con, "orders", orders, overwrite = TRUE)
+
+#Checking that tables were successfully created
+dbListTables(con)
+```
+
+
+Retrieving the first 10 customers 
+```{r}
+dbGetQuery(con, "
+           SELECT customer_id, name, region
+           FROM customers
+           LIMIT 10
+           ")
+```
+
+Finding customers with total_spend greater than 150 
+```{r}
+dbGetQuery(con, "
+           SELECT customer_id, name, region
+           FROM customers 
+           WHERE total_spending > 150
+           ")
+
+#Using dbplyr pipes
+customers_db <- tbl(con, "customers")
+
+customer_db %>% 
+  filter(total_spend > 150) %>% 
+  select(customer_id, name, region) %>% 
+  collect() #this gives the results from the database into R 
+```
+
+Finding products containing the word "widget" regardless of capitalization
+```{r}
+widget_products <- dbGetQuery(con, "
+                              SELECT * 
+                              FROM products
+                              WHERE LOWER(name) LIKE '%widget%' --LIKE searches for the matching pattern, LOWER makes the comparison case- insensitive by converting all the text to lowercase
+                              ")
+
+#performing the same query using dbplyr and show_query()
+products_db <- tbl(con, "products")
+
+widget_products_dbplyr <- products_db %>% 
+  filter(sql("LOWER(name) LIKE '%widget%'"))
+
+show_query(widget_products_dbplyr)
+
+#Retrieving the results
+widget_products_dbplyr %>% 
+  collect()
+
+#Disconnecting from the database
+dbDisconnect(con)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
