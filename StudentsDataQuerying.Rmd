@@ -1,0 +1,129 @@
+---
+title: "SQLQueriesStudentRelation"
+author: "Lir Doron"
+date: "2026-11-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Say we have two tables, products and orders
+Product(product_id, product_name)
+Orders(order_id, product_id, order_date, amount)
+
+-products_id is the primary key in products and the foreign key in orders
+
+
+```{r}
+#Establishing database connection
+library(DBI)
+library(RSQLite)
+library(tibble)
+
+con <- dbConnect(RSQLite::SQLite(), ":memory:")
+
+#creating ordinary R data frames
+products <- data.frame(
+  product_id = 1:4,
+  product_name = c("Laptop", "Mouse", "Keyboard", "Monitor")
+)
+
+orders <- data.frame(
+  order_id = 1:9,
+  product_id = c(1, 2, 3, 1, 4, 2, 3, 4, 3),
+  order_date = c("2023-01-03", "2023-01-04", "2023-01-05",
+                 "2023-01-10", "2023-01-11", "2023-01-12",
+                 "2023-01-18", "2023-01-19", "2023-01-20"),
+  amount = c(950, 25, 70, 1050, 220, 30, 90, 180, 100)
+)
+
+#transfering R data frames into the SQL database
+dbWriteTable(con, "products", products)
+dbWriteTable(con, "orders", orders)
+
+#Checking what tables exist
+dbListTables(con)
+
+```
+
+Calculating the total sales and number of orders for each product
+```{r}
+dbGetQuery(con, "
+           SELECT 
+           p.product_id,
+           p.product_name, 
+           SUM(o.amount) AS total_sales,
+           COUNT(*) AS n_orders
+           FROM orders o -- start with orders since we want to calculate sales and count orders
+           INNER JOIN products p 
+           ON o.product_id = p.product_id
+           GROUP BY p.product_id, p.product_name 
+           ")
+```
+
+Now to find products whose average amount exceeds 80
+```{r}
+dbGetQuery(con, "
+           SELECT p.product_id, p.product_name, AVG(o.amount) AS avg_amount
+           FROM orders o 
+           INNER JOIN products p ON o.product_id = p.product_id
+           GROUP BY p.product_id, p.product_name
+           HAVING avg_amount > 80")
+```
+
+
+Creating a new table called weekly_orders inside the database
+```{r}
+dbExecute(con, "DROP TABLE IF EXISTS weekly_orders")
+
+dbExecute(con,"
+            CREATE TABLE weekly_orders AS
+            SELECT strftime('%Y-%W', order_date) AS week_label, --extracts the year and week number from a date 
+            COUNT(*) AS n_orders,
+            SUM(amount) AS total_sales
+            FROM orders
+            GROUP BY strftime('%Y-%W', order_date) --group together all orders belonging to the same week 
+")
+
+#checking that the table was created
+dbListTables(con)
+
+#Retrieving the tables
+weekly_orders <- as_tibble(
+  dbGetQuery(con, "SELECT * FROM weekly_orders")
+)
+
+weekly_orders
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
